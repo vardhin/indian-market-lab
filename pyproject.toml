@@ -1,0 +1,20 @@
+[project]
+name = "indian-market-lab"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "vardhin", email = "gamidisurya.vardhin2022@vitstudent.ac.in" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=3.0.6",
+    "pyarrow>=25.0.1",
+]
+
+[project.scripts]
+indian-market-lab = "indian_market_lab:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
