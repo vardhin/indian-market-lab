@@ -767,6 +767,8 @@ def cross_sectional_diagnostics(
             "dates": 0,
             "mean_daily_ic": None,
             "median_daily_ic": None,
+            "std_daily_ic": None,
+            "icir": None,
             "positive_ic_fraction": None,
             "mean_top_decile_return": None,
             "mean_universe_return": None,
@@ -796,6 +798,24 @@ def cross_sectional_diagnostics(
         ),
         "median_daily_ic": float(
             daily["ic"].median()
+        ),
+        "std_daily_ic": float(
+            daily["ic"].std()
+        ),
+        "icir": (
+            float(
+                daily["ic"].mean()
+                / daily["ic"].std()
+            )
+            if (
+                pd.notna(
+                    daily["ic"].std()
+                )
+                and float(
+                    daily["ic"].std()
+                ) > 0
+            )
+            else None
         ),
         "positive_ic_fraction": float(
             daily["ic"].gt(0).mean()
