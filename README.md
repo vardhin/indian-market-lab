@@ -945,6 +945,188 @@ The 2022-2026 interval has already been inspected during development, so this
 is correctly described as nested walk-forward generalization analysis rather
 than a pristine never-seen final holdout.
 
+
+## Multi-axis robustness cube
+
+After the nested generalization experiment, the persistence rule is no longer
+retuned. The robustness battery freezes the simplest construction:
+
+```text
+buy fresh top-K
+keep an incumbent while rank <= K
+replace after it leaves K
+score-gap hurdle = 0
+```
+
+and asks whether that same rule survives changes in the environment rather than
+searching for another historical optimum.
+
+Run:
+
+```bash
+uv run python src/ml/robustness_cube.py --self-test
+uv run python src/ml/robustness_cube.py
+```
+
+The default suite evaluates every stress across:
+
+```text
+K = {5, 10, 15, 20}
+evaluation = aligned annual OOS predictions, 2019-2026
+base model = HistGradientBoosting
+base seed = 42
+base capital = INR 50,000
+base liquidity floor = INR 5,000,000 trailing-20d median turnover
+risk-free rate = 6.5%
+```
+
+### Independent robustness axes
+
+Capital:
+
+```text
+INR 25k
+INR 50k
+INR 100k
+INR 250k
+INR 500k
+```
+
+Cost stress:
+
+```text
+0.0x
+0.5x
+1.0x
+1.5x
+2.0x
+```
+
+The friction multiplier scales STT, stamp duty, SEBI/exchange charges,
+brokerage, DP charges and slippage. GST remains the statutory percentage; its
+taxable base is what scales.
+
+Liquidity / execution-universe stress:
+
+```text
+INR 5M
+INR 10M
+INR 25M
+INR 50M
+trailing-20d median turnover
+```
+
+This is deliberately an inference/execution-universe stress. It does not
+retroactively retrain the model on a newly invented universe.
+
+Model-specification robustness:
+
+```text
+Ridge
+HistGradientBoosting with the original internal early stopping
+HistGradientBoosting with fixed 250 iterations and early_stopping=False
+```
+
+The fixed-iteration HistGB variant exists specifically to remove the random
+internal validation fraction from the model specification while preserving the
+same tree depth, learning rate, leaf-size and L2 settings.
+
+Random-seed robustness for the base HistGB:
+
+```text
+7
+19
+42
+123
+2026
+```
+
+The seed is never selected by performance; the distribution is reported.
+
+A small joint-stress set combines lower capital, higher friction and stricter
+liquidity without evaluating the full Cartesian product.
+
+### Generalization-first reporting
+
+Every run is retained per K, but each stress setting is also summarized over
+all complete calendar years and all K values together. The main family-level
+statistics are:
+
+```text
+median annual CAGR
+25th-percentile annual CAGR
+worst annual CAGR
+positive-CAGR fraction
+
+median annual Sharpe
+25th-percentile annual Sharpe
+positive-Sharpe fraction
+
+worst annual drawdown
+median annual turnover
+
+median terminal CAGR across K
+minimum terminal CAGR across K
+
+failed-entry count
+average exposure
+```
+
+The purpose is to reject a result that survives only one breadth or one market
+year even when its terminal CAGR looks attractive.
+
+### Statistical uncertainty
+
+For the frozen base persistence family `K={5,10,15,20}`, the suite aligns
+daily strategy returns with the NIFTY 500 price index and runs a 20-session
+moving-block bootstrap by default.
+
+It reports 95% bootstrap intervals for:
+
+```text
+CAGR
+Sharpe
+maximum drawdown
+CAGR minus NIFTY 500 CAGR
+```
+
+It also runs a joint max-statistic test on active daily returns. The four K
+active-return series are centered under the null and block-resampled jointly,
+preserving cross-K dependence. The resulting familywise p-value controls the
+choice of the best K **inside this four-breadth frozen persistence family**.
+
+It does not claim to correct for every strategy, model or exploratory decision
+ever examined during the project.
+
+### Outputs
+
+```text
+reports/ml/robustness_cube/
+├── robustness_terminal_runs.csv
+├── robustness_annual_runs.csv
+├── robustness_axis_summary.csv
+├── model_seed_oos_diagnostics.csv
+├── benchmark_reference.csv
+├── bootstrap_aligned_returns.csv
+├── bootstrap_confidence_intervals.csv
+├── familywise_block_bootstrap_test.json
+├── robustness_captioned_metrics.csv
+└── robustness_cube_summary.json
+```
+
+Prediction files are reused from the nested-generalization cache where model,
+seed and year match. Additional Ridge, fixed-HistGB or seed variants are cached
+once generated.
+
+The default command runs every axis. Sections can be run separately without
+changing the methodology:
+
+```bash
+uv run python src/ml/robustness_cube.py --sections capital cost liquidity
+uv run python src/ml/robustness_cube.py --sections model seed
+uv run python src/ml/robustness_cube.py --sections joint bootstrap
+```
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
