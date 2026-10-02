@@ -323,20 +323,325 @@ METRIC_GLOSSARY: dict[str, dict[str, str]] = {
     },
 }
 
+# Concepts from the research glossary that are important to understand even
+# when they are not a scalar produced by every individual backtest.
+METRIC_GLOSSARY.update({
+    "return": {
+        "label": "Return",
+        "caption": "Percentage change in portfolio or asset value over a specified interval.",
+        "category": "concept",
+    },
+    "drawdown": {
+        "label": "Drawdown",
+        "caption": "Current percentage decline from the portfolio's previous high-water mark.",
+        "category": "concept",
+    },
+    "tail_risk": {
+        "label": "Tail Risk",
+        "caption": "Risk from rare, extreme losses that ordinary volatility can understate.",
+        "category": "concept",
+    },
+    "benchmark": {
+        "label": "Benchmark",
+        "caption": "Reference portfolio or index used to judge whether a strategy adds value.",
+        "category": "concept",
+    },
+    "excess_return": {
+        "label": "Excess Return",
+        "caption": "Strategy return minus a chosen reference return, usually a benchmark or the risk-free rate.",
+        "category": "concept",
+    },
+    "correlation": {
+        "label": "Correlation",
+        "caption": "Degree to which two return series move together, from -1 to +1.",
+        "category": "concept",
+    },
+    "diversification": {
+        "label": "Diversification",
+        "caption": "Combining imperfectly correlated positions so individual fluctuations can partially offset.",
+        "category": "concept",
+    },
+    "exposure": {
+        "label": "Exposure",
+        "caption": "Amount or fraction of capital economically affected by market positions.",
+        "category": "concept",
+    },
+    "leverage": {
+        "label": "Leverage",
+        "caption": "Market exposure greater than actual capital; this project currently uses no leverage.",
+        "category": "portfolio",
+    },
+    "long_position": {
+        "label": "Long",
+        "caption": "Position that benefits when the asset price rises.",
+        "category": "concept",
+    },
+    "short_position": {
+        "label": "Short",
+        "caption": "Position that benefits when the asset price falls; the current simulator is long-only.",
+        "category": "concept",
+    },
+    "gross_exposure": {
+        "label": "Gross Exposure",
+        "caption": "Absolute long exposure plus absolute short exposure as a fraction of capital.",
+        "category": "portfolio",
+    },
+    "net_exposure": {
+        "label": "Net Exposure",
+        "caption": "Long exposure minus short exposure as a fraction of capital.",
+        "category": "portfolio",
+    },
+    "risk_reward_ratio": {
+        "label": "Risk/Reward Ratio",
+        "caption": "Typical potential gain relative to typical amount at risk; conventions can differ.",
+        "category": "trading",
+    },
+    "geometric_return": {
+        "label": "Geometric Return",
+        "caption": "Compound return that respects multiplicative growth through time.",
+        "category": "return",
+    },
+    "arithmetic_return": {
+        "label": "Arithmetic Return",
+        "caption": "Simple average of periodic returns, which can differ materially from compounded growth.",
+        "category": "return",
+    },
+    "log_return": {
+        "label": "Log Return",
+        "caption": "Natural logarithm of the price ratio, useful because log returns add across time.",
+        "category": "return",
+    },
+    "pnl": {
+        "label": "P&L",
+        "caption": "Profit and loss in currency terms, realized after exit or unrealized while a position remains open.",
+        "category": "trading",
+    },
+    "equity_curve": {
+        "label": "Equity Curve",
+        "caption": "Time series of total portfolio value throughout the backtest.",
+        "category": "visual",
+    },
+    "underwater_curve": {
+        "label": "Underwater Curve",
+        "caption": "Time series of drawdown from the running high-water mark, returning to zero at new highs.",
+        "category": "visual",
+    },
+    "bid_ask_spread": {
+        "label": "Bid-Ask Spread",
+        "caption": "Difference between the best available buying and selling quotes; not separately modeled yet.",
+        "category": "execution",
+    },
+    "aum": {
+        "label": "AUM",
+        "caption": "Assets under management: total capital controlled by an investment strategy or fund.",
+        "category": "portfolio",
+    },
+    "rebalancing": {
+        "label": "Rebalancing",
+        "caption": "Trading required to move portfolio holdings from current weights to newly desired weights.",
+        "category": "portfolio",
+    },
+    "position_sizing": {
+        "label": "Position Sizing",
+        "caption": "Rule deciding how much capital to allocate to each selected security.",
+        "category": "portfolio",
+    },
+    "equal_weighting": {
+        "label": "Equal Weighting",
+        "caption": "Allocate the same capital fraction to every selected security; the current top-K simulator uses equal slot budgets.",
+        "category": "portfolio",
+    },
+    "market_cap_weighting": {
+        "label": "Market-Cap Weighting",
+        "caption": "Allocate weights in proportion to company market capitalization or free-float market capitalization.",
+        "category": "portfolio",
+    },
+    "risk_parity": {
+        "label": "Risk Parity",
+        "caption": "Allocate capital so positions contribute more equally to total portfolio risk.",
+        "category": "portfolio",
+    },
+    "benchmark_return": {
+        "label": "Benchmark Return",
+        "caption": "Return produced by the reference index or baseline over the same evaluation period.",
+        "category": "benchmark",
+    },
+    "ml_accuracy": {
+        "label": "ML Accuracy",
+        "caption": "Prediction correctness rate; useful diagnostically but not a substitute for financial performance.",
+        "category": "ml",
+    },
+    "information_coefficient": {
+        "label": "IC — Information Coefficient",
+        "caption": "Correlation between model scores and future realized cross-sectional returns.",
+        "category": "ml",
+    },
+    "rank_ic": {
+        "label": "Rank IC",
+        "caption": "Spearman rank correlation between model ranking and future return ranking.",
+        "category": "ml",
+    },
+    "long_short_spread": {
+        "label": "Long-Short Spread",
+        "caption": "Future return of the highest-ranked bucket minus the lowest-ranked bucket.",
+        "category": "ml",
+    },
+    "quantile_decile": {
+        "label": "Quantiles / Deciles",
+        "caption": "Buckets formed after ranking securities, used to test whether realized returns improve monotonically with score.",
+        "category": "ml",
+    },
+    "regime": {
+        "label": "Market Regime",
+        "caption": "Broad market environment such as bull, bear, high-volatility or low-volatility conditions.",
+        "category": "research_design",
+    },
+    "out_of_sample": {
+        "label": "Out-of-Sample",
+        "caption": "Observations not used to fit the model being evaluated.",
+        "category": "research_design",
+    },
+    "walk_forward_testing": {
+        "label": "Walk-Forward Testing",
+        "caption": "Repeatedly train on past data and evaluate on the next unseen time block to mimic deployment.",
+        "category": "research_design",
+    },
+    "look_ahead_bias": {
+        "label": "Look-Ahead Bias",
+        "caption": "Backtest error where information unavailable at decision time leaks into the simulated decision.",
+        "category": "research_design",
+    },
+    "survivorship_bias": {
+        "label": "Survivorship Bias",
+        "caption": "Historical bias caused by evaluating only securities that survived to the present.",
+        "category": "research_design",
+    },
+    "data_leakage": {
+        "label": "Data Leakage",
+        "caption": "Any pathway by which future or evaluation information contaminates training or feature construction.",
+        "category": "research_design",
+    },
+    "overfitting": {
+        "label": "Overfitting",
+        "caption": "Fitting historical noise or repeated trial choices rather than a relationship that generalizes.",
+        "category": "research_design",
+    },
+    "transaction_cost_adjusted_return": {
+        "label": "Transaction-Cost-Adjusted Return",
+        "caption": "Net strategy return after brokerage, taxes, fees, spread and modeled slippage.",
+        "category": "cost",
+    },
+})
+
 
 def glossary_frame() -> pd.DataFrame:
+    computed_metrics = {
+        "starting_capital",
+        "ending_equity",
+        "net_profit",
+        "total_return",
+        "cagr",
+        "annualized_arithmetic_return",
+        "annualized_volatility",
+        "risk_free_rate_annual",
+        "sharpe",
+        "downside_deviation",
+        "sortino",
+        "max_drawdown",
+        "max_drawdown_duration_sessions",
+        "max_drawdown_duration_days",
+        "high_water_mark",
+        "calmar",
+        "recovery_factor",
+        "var_95",
+        "cvar_95",
+        "skewness",
+        "excess_kurtosis",
+        "best_day_return",
+        "worst_day_return",
+        "positive_day_fraction",
+        "trades",
+        "win_rate",
+        "average_win",
+        "average_loss",
+        "payoff_ratio",
+        "expectancy_per_trade",
+        "profit_factor",
+        "average_trade_return",
+        "total_fees",
+        "fees_pct_initial_capital",
+        "turnover",
+        "turnover_multiple",
+        "annualized_turnover_multiple",
+        "average_exposure",
+        "max_exposure",
+        "benchmark_total_return",
+        "benchmark_cagr",
+        "excess_cagr",
+        "beta",
+        "alpha_annualized",
+        "tracking_error",
+        "information_ratio",
+        "benchmark_correlation",
+        "mean_daily_ic",
+        "mean_top_decile_excess",
+    }
+
+    diagnostic_metrics = {
+        "icir",
+        "top_k_return",
+        "decile_monotonicity",
+        "rolling_sharpe",
+        "rolling_drawdown",
+        "gross_return",
+        "net_return",
+        "slippage",
+        "liquidity",
+        "information_coefficient",
+        "rank_ic",
+        "long_short_spread",
+        "quantile_decile",
+        "walk_forward_testing",
+        "out_of_sample",
+        "transaction_cost_adjusted_return",
+    }
+
+    rows = []
+    for key, value in (
+        METRIC_GLOSSARY.items()
+    ):
+        if key in computed_metrics:
+            status = "computed"
+        elif key in diagnostic_metrics:
+            status = "diagnostic/report"
+        elif key in {
+            "market_impact",
+            "capacity",
+            "mae",
+            "mfe",
+            "bid_ask_spread",
+            "short_position",
+            "gross_exposure",
+            "net_exposure",
+            "risk_parity",
+            "market_cap_weighting",
+        }:
+            status = "not_yet_modeled"
+        else:
+            status = "concept"
+
+        rows.append({
+            "metric": key,
+            **value,
+            "status": status,
+        })
+
     return pd.DataFrame(
-        [
-            {
-                "metric": key,
-                **value,
-            }
-            for key, value
-            in METRIC_GLOSSARY.items()
-        ]
+        rows
     ).sort_values(
         [
             "category",
+            "status",
             "metric",
         ]
     ).reset_index(
@@ -781,11 +1086,11 @@ def compute_performance_metrics(
         else None
     )
 
-    max_drawdown_rupees = (
-        high_water_mark
-        * abs(
-            max_drawdown
-        )
+    max_drawdown_rupees = float(
+        (
+            running_max
+            - values
+        ).max()
     )
     recovery_factor = (
         net_profit
@@ -1634,6 +1939,11 @@ def format_metric_value(
     metric: str,
     value: Any,
 ) -> str:
+    if metric not in METRIC_GLOSSARY:
+        if value is None:
+            return "n/a"
+        return str(value)
+
     if value is None or (
         isinstance(
             value,
