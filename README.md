@@ -385,6 +385,90 @@ reports/backtests/grid/
 The grid also reports Calmar, turnover multiples, fees, failed entries, delayed
 exits and data-quality exclusions for each configuration.
 
+
+## Market benchmark comparison
+
+Official NSE historical price-index data is ingested separately from security
+history:
+
+```bash
+uv run python src/data/index_benchmarks.py --self-test
+uv run python src/data/index_benchmarks.py
+```
+
+Default indices:
+
+```text
+NIFTY 50
+NIFTY 500
+```
+
+The downloader uses the NSE historical-index report endpoint, caches each
+request window under `data/raw/index_benchmarks/`, validates OHLC integrity
+and writes normalized price-index history to:
+
+```text
+data/processed/index_benchmarks/
+├── nifty_50.parquet
+├── nifty_50.csv
+├── nifty_500.parquet
+├── nifty_500.csv
+├── nse_price_indices.parquet
+└── nse_price_indices.csv
+```
+
+The first comparison deliberately uses price indices rather than total-return
+indices. The stock simulator does not yet credit cash dividends, so comparing
+price-only strategy wealth to a dividend-reinvested TRI would be asymmetric.
+Dividend-inclusive strategy and TRI comparison belongs in the later cash-flow
+stage.
+
+Then generate the frozen deterministic benchmark report:
+
+```bash
+uv run python src/backtest/benchmark_report.py --self-test
+uv run python src/backtest/benchmark_report.py
+```
+
+The evaluation window starts on the first date with at least one
+`eligible_universe=True` row. The 120-session feature warm-up period is
+excluded from both strategies and indices.
+
+Frozen strategy comparators:
+
+```text
+liquidity_control        h20 / k5
+momentum_20d             h20 / k5
+momentum_60d             h20 / k5
+momentum_60d             h20 / k10
+risk_adjusted_momentum_60d h20 / k10
+```
+
+They are compared with NIFTY 50, NIFTY 500 and a zero-return cash baseline on:
+
+- terminal wealth and total return
+- CAGR
+- annualized volatility
+- Sharpe
+- maximum drawdown
+- Calmar
+- calendar-year returns
+- rolling 1-year and 3-year returns
+- largest drawdown episodes
+- CAGR difference versus NIFTY 50 and NIFTY 500
+
+Outputs:
+
+```text
+reports/benchmarks/
+├── benchmark_comparison.csv
+├── calendar_year_returns_percent.csv
+├── rolling_return_summary.csv
+├── largest_drawdowns.csv
+├── aligned_equity_curves.csv
+└── benchmark_report_summary.json
+```
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
