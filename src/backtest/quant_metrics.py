@@ -2058,6 +2058,12 @@ def captioned_metric_rows(
                     "other",
                 )
             ),
+            "status": (
+                glossary.get(
+                    "status",
+                    ""
+                )
+            ),
         })
 
     return pd.DataFrame(
