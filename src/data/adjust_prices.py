@@ -685,22 +685,16 @@ def build_adjusted_partitions(
         if child.is_dir():
             shutil.rmtree(child)
 
-    event_map: dict[
-        pd.Timestamp,
-        list[dict],
-    ] = {}
-
-    for row in events.itertuples(
-        index=False
-    ):
-        day = pd.Timestamp(
-            row.ex_date
-        ).normalize()
-
-        event_map.setdefault(
-            day,
-            [],
-        ).append({
+    # Sort events newest -> oldest. Before writing each trading-day partition,
+    # fold in every corporate action whose ex-date is STRICTLY later than that
+    # partition date. This correctly handles actions whose ex-date has no
+    # resolved partition (holiday/suspension/missing day) while still leaving
+    # an actual ex-date row on the post-action basis.
+    event_rows = [
+        {
+            "ex_date": pd.Timestamp(
+                row.ex_date
+            ).normalize(),
             "canonical_security_id": (
                 str(
                     row.canonical_security_id
@@ -712,7 +706,16 @@ def build_adjusted_partitions(
             "volume_multiplier": float(
                 row.volume_multiplier
             ),
-        })
+        }
+        for row in events.sort_values(
+            "ex_date",
+            ascending=False,
+        ).itertuples(
+            index=False
+        )
+    ]
+
+    event_index = 0
 
     price_state: dict[str, float] = {}
     volume_state: dict[str, float] = {}
@@ -746,6 +749,39 @@ def build_adjusted_partitions(
         day = pd.Timestamp(
             date_text
         ).normalize()
+
+        # Accumulate all events strictly AFTER the current trading date before
+        # calculating this partition's factors.
+        while (
+            event_index < len(event_rows)
+            and event_rows[event_index]["ex_date"] > day
+        ):
+            event = event_rows[event_index]
+            cid = event[
+                "canonical_security_id"
+            ]
+
+            price_state[cid] = (
+                price_state.get(
+                    cid,
+                    1.0,
+                )
+                * event[
+                    "price_multiplier"
+                ]
+            )
+
+            volume_state[cid] = (
+                volume_state.get(
+                    cid,
+                    1.0,
+                )
+                * event[
+                    "volume_multiplier"
+                ]
+            )
+
+            event_index += 1
 
         d = pd.read_parquet(
             path
@@ -863,36 +899,6 @@ def build_adjusted_partitions(
                         "volume_adjustment_factor"
                     ].max()
                 ),
-            )
-
-        # Ex-date rows are already post-action, so update state only AFTER
-        # writing the partition for that date.
-        for event in event_map.get(
-            day,
-            [],
-        ):
-            cid = event[
-                "canonical_security_id"
-            ]
-
-            price_state[cid] = (
-                price_state.get(
-                    cid,
-                    1.0,
-                )
-                * event[
-                    "price_multiplier"
-                ]
-            )
-
-            volume_state[cid] = (
-                volume_state.get(
-                    cid,
-                    1.0,
-                )
-                * event[
-                    "volume_multiplier"
-                ]
             )
 
         if (
