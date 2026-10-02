@@ -843,6 +843,20 @@ def select_gate_on_2021(
     float | None,
     int,
 ]:
+    tune_start = pd.Timestamp(
+        "2021-01-01"
+    )
+    last_pre_tune_index = int(
+        daily.loc[
+            daily["date"].lt(
+                tune_start
+            ),
+            "market_day_index",
+        ]
+        .dropna()
+        .max()
+    )
+
     train_mask = (
         daily["date"].between(
             VALIDATION_START,
@@ -850,6 +864,12 @@ def select_gate_on_2021(
                 "2020-12-31"
             ),
             inclusive="both",
+        )
+        & daily[
+            "market_day_index"
+        ].le(
+            last_pre_tune_index
+            - HORIZON
         )
     )
 
