@@ -647,6 +647,78 @@ def drawdown_episodes(
     )
 
 
+def self_test() -> None:
+    dates = pd.date_range(
+        "2025-01-01",
+        periods=800,
+        freq="B",
+    )
+    equity = pd.Series(
+        [
+            50_000.0
+            * (1.0005 ** i)
+            for i in range(
+                len(dates)
+            )
+        ]
+    )
+
+    curve = pd.DataFrame({
+        "date": dates,
+        "equity": equity,
+    })
+
+    metrics = curve_metrics(
+        curve,
+        name="TEST",
+        kind="synthetic",
+    )
+
+    assert (
+        metrics["end_value"]
+        > metrics["start_value"]
+    )
+    assert metrics["cagr"] > 0
+    assert (
+        metrics[
+            "max_drawdown"
+        ]
+        >= -1e-12
+    )
+
+    yearly = calendar_returns(
+        curve,
+        name="TEST",
+    )
+
+    assert not yearly.empty
+    assert bool(
+        yearly.iloc[0][
+            "partial_year"
+        ]
+    )
+
+    rolling = (
+        rolling_return_summary(
+            curve,
+            name="TEST",
+        )
+    )
+
+    windows = {
+        row["window"]
+        for row in rolling
+    }
+
+    assert "1y" in windows
+    assert "3y" in windows
+
+    print(
+        "Benchmark report "
+        "self-test: PASS"
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -680,7 +752,15 @@ def main() -> None:
         type=float,
         default=5.0,
     )
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+    )
     args = ap.parse_args()
+
+    if args.self_test:
+        self_test()
+        return
 
     if args.capital <= 0:
         raise SystemExit(
