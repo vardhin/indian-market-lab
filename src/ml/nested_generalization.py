@@ -100,6 +100,7 @@ def prediction_path(
     root: Path,
     *,
     model_name: str,
+    random_state: int,
     year: int,
 ) -> Path:
     return (
@@ -217,6 +218,9 @@ def build_annual_oos_predictions(
         path = prediction_path(
             root,
             model_name=model_name,
+            random_state=(
+                random_state
+            ),
             year=year,
         )
         path.parent.mkdir(
@@ -555,6 +559,19 @@ def annual_metrics_from_result(
         equity["date"],
         errors="coerce",
     ).dt.normalize()
+    equity = (
+        equity.loc[
+            equity["date"].notna()
+        ]
+        .sort_values(
+            "date"
+        )
+        .drop_duplicates(
+            "date",
+            keep="last",
+        )
+        .reset_index(drop=True)
+    )
     equity["year"] = (
         equity["date"].dt.year
     )
@@ -576,25 +593,66 @@ def annual_metrics_from_result(
         dict
     ] = []
 
-    for year, curve in equity.groupby(
-        "year",
-        sort=True,
-    ):
-        curve = (
-            curve.sort_values(
+    years = sorted(
+        equity[
+            "year"
+        ].unique()
+    )
+
+    for year in years:
+        current = (
+            equity.loc[
+                equity[
+                    "year"
+                ].eq(year)
+            ]
+            .sort_values(
                 "date"
             )
             .copy()
         )
 
-        if len(curve) < 2:
+        if current.empty:
             continue
 
-        initial = float(
-            curve[
-                "equity"
-            ].iloc[0]
-        )
+        previous = equity.loc[
+            equity[
+                "date"
+            ].lt(
+                current[
+                    "date"
+                ].iloc[0]
+            )
+        ]
+
+        if previous.empty:
+            curve = (
+                current.copy()
+            )
+            initial = float(
+                curve[
+                    "equity"
+                ].iloc[0]
+            )
+        else:
+            anchor = (
+                previous.tail(1)
+            )
+            curve = pd.concat(
+                [
+                    anchor,
+                    current,
+                ],
+                ignore_index=True,
+            )
+            initial = float(
+                anchor[
+                    "equity"
+                ].iloc[0]
+            )
+
+        if len(curve) < 2:
+            continue
 
         if not trades.empty:
             exits = trades.loc[
@@ -685,33 +743,39 @@ def annual_metrics_from_result(
             "turnover_multiple"
         ]
 
+        first_date = pd.Timestamp(
+            current[
+                "date"
+            ].iloc[0]
+        )
+        last_date = pd.Timestamp(
+            current[
+                "date"
+            ].iloc[-1]
+        )
+        partial = bool(
+            (
+                first_date.month == 1
+                and first_date.day > 10
+            )
+            or first_date.month > 1
+            or last_date.month < 12
+            or (
+                last_date.month == 12
+                and last_date.day < 20
+            )
+        )
+
         rows.append({
             "year": int(
                 year
             ),
-            "partial_year": bool(
-                (
-                    curve[
-                        "date"
-                    ].iloc[0].month
-                    != 1
-                )
-                or (
-                    curve[
-                        "date"
-                    ].iloc[-1].month
-                    != 12
-                )
-            ),
+            "partial_year": partial,
             "date_start": str(
-                curve[
-                    "date"
-                ].iloc[0].date()
+                first_date.date()
             ),
             "date_end": str(
-                curve[
-                    "date"
-                ].iloc[-1].date()
+                last_date.date()
             ),
             "entries": entries,
             "exits": exits_count,
@@ -761,12 +825,113 @@ def build_config_surface(
         path.is_file()
         and not rebuild
     ):
-        print(
-            f"Reusing {cost_name} "
-            "configuration surface"
-        )
-        return pd.read_csv(
+        cached = pd.read_csv(
             path
+        )
+        expected_k = {
+            int(x)
+            for x in top_k_values
+        }
+        expected_m = {
+            int(x)
+            for x in hold_multipliers
+        }
+        expected_g = {
+            round(
+                float(x),
+                10,
+            )
+            for x in score_gaps
+        }
+
+        valid = (
+            "capital" in cached.columns
+            and "risk_free_rate_annual"
+            in cached.columns
+            and "oos_start_year"
+            in cached.columns
+            and "oos_end_year"
+            in cached.columns
+            and set(
+                pd.to_numeric(
+                    cached[
+                        "top_k"
+                    ],
+                    errors="coerce",
+                )
+                .dropna()
+                .astype(int)
+                .unique()
+            )
+            == expected_k
+            and set(
+                pd.to_numeric(
+                    cached[
+                        "hold_multiplier"
+                    ],
+                    errors="coerce",
+                )
+                .dropna()
+                .astype(int)
+                .unique()
+            )
+            == expected_m
+            and {
+                round(
+                    float(x),
+                    10,
+                )
+                for x in pd.to_numeric(
+                    cached[
+                        "min_score_gap"
+                    ],
+                    errors="coerce",
+                )
+                .dropna()
+                .unique()
+            }
+            == expected_g
+            and cached[
+                "capital"
+            ].eq(
+                float(
+                    capital
+                )
+            ).all()
+            and cached[
+                "risk_free_rate_annual"
+            ].eq(
+                float(
+                    annual_risk_free_rate
+                )
+            ).all()
+            and cached[
+                "oos_start_year"
+            ].eq(
+                int(
+                    oos_start_year
+                )
+            ).all()
+            and cached[
+                "oos_end_year"
+            ].eq(
+                int(
+                    oos_end_year
+                )
+            ).all()
+        )
+
+        if valid:
+            print(
+                f"Reusing {cost_name} "
+                "configuration surface"
+            )
+            return cached
+
+        print(
+            f"Ignoring stale {cost_name} "
+            "surface because experiment "
+            "settings differ."
         )
 
     panel = (
@@ -869,6 +1034,18 @@ def build_config_surface(
                             ),
                             "min_score_gap": float(
                                 gap
+                            ),
+                            "capital": float(
+                                capital
+                            ),
+                            "risk_free_rate_annual": float(
+                                annual_risk_free_rate
+                            ),
+                            "oos_start_year": int(
+                                oos_start_year
+                            ),
+                            "oos_end_year": int(
+                                oos_end_year
                             ),
                         },
                     )
@@ -1413,6 +1590,12 @@ def benchmark_rows(
 def aggregate_annual_generalization(
     annual: pd.DataFrame,
 ) -> pd.DataFrame:
+    annual = annual.loc[
+        ~annual[
+            "partial_year"
+        ].fillna(False)
+    ].copy()
+
     rows: list[
         dict
     ] = []
