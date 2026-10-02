@@ -790,25 +790,27 @@ def add_unsafe_action_censor(
     unsafe_actions: pd.DataFrame,
     *,
     max_lookback: int = 60,
-    max_forward_horizon: int = 20,
 ) -> pd.DataFrame:
     """
-    Censor rows whose feature history or forward target could cross an unsafe
-    mechanical corporate action.
+    Separate past-known feature contamination from future target contamination.
 
-    For an unsafe event at market session e:
-      - rows e-max_forward_horizon .. e-1 can have contaminated targets;
-      - rows e .. e+max_lookback-1 can have contaminated trailing features.
+    For an unsafe mechanical event at market session e:
+      - feature rows e .. e+max_lookback-1 are unsafe because their trailing
+        adjusted-price history crosses an event we could not adjust safely;
+      - for each target horizon h, rows e-h .. e-1 have labels that cross the
+        future event and therefore cannot be used for supervised training.
 
-    The underlying rows remain in the dataset for auditability; they are merely
-    excluded from eligible_universe.
+    Crucially, rows BEFORE a future event remain in the point-in-time tradable
+    universe. Future corporate actions must never decide universe membership.
     """
     df = df.copy()
-    df[
-        "unsafe_mechanical_action_window"
-    ] = False
+    df["unsafe_feature_window"] = False
+
+    for horizon in HORIZONS:
+        df[f"unsafe_target_window_{horizon}d"] = False
 
     if unsafe_actions.empty:
+        df["unsafe_mechanical_action_window"] = False
         return df
 
     trading_dates = pd.Index(
@@ -851,16 +853,6 @@ def add_unsafe_action_censor(
         ):
             continue
 
-        lower = (
-            event_index
-            - max_forward_horizon
-        )
-        upper = (
-            event_index
-            + max_lookback
-            - 1
-        )
-
         market_index = pd.to_numeric(
             df.loc[
                 idx,
@@ -869,20 +861,47 @@ def add_unsafe_action_censor(
             errors="coerce",
         )
 
-        affected_idx = market_index.index[
+        feature_affected = market_index.index[
             market_index.between(
-                lower,
-                upper,
+                event_index,
+                event_index
+                + max_lookback
+                - 1,
                 inclusive="both",
             )
         ]
 
         df.loc[
-            affected_idx,
-            "unsafe_mechanical_action_window",
+            feature_affected,
+            "unsafe_feature_window",
         ] = True
 
+        for horizon in HORIZONS:
+            target_affected = market_index.index[
+                market_index.between(
+                    event_index - horizon,
+                    event_index - 1,
+                    inclusive="both",
+                )
+            ]
+
+            df.loc[
+                target_affected,
+                f"unsafe_target_window_{horizon}d",
+            ] = True
+
+    target_cols = [
+        f"unsafe_target_window_{h}d"
+        for h in HORIZONS
+    ]
+
+    df["unsafe_mechanical_action_window"] = (
+        df["unsafe_feature_window"]
+        | df[target_cols].any(axis=1)
+    )
+
     return df
+
 
 
 def add_universe_flags(
@@ -940,17 +959,58 @@ def add_universe_flags(
         )
     )
 
+    # Point-in-time universe membership uses only information available by the
+    # close of t. Whether the stock happens to have a row tomorrow is future
+    # information and therefore MUST NOT be part of this flag.
     df["eligible_universe"] = (
         df["feature_history_ready"]
         & df["price_eligible"]
         & df["liquidity_eligible"]
         & df["activity_eligible"]
         & df["recent_20_sessions_complete"]
-        & df["has_next_session_open"]
         & ~df[
-            "unsafe_mechanical_action_window"
+            "unsafe_feature_window"
         ]
     )
+
+    return df
+
+
+def add_training_flags(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Mark rows usable for supervised learning at each forecast horizon.
+
+    These flags are intentionally separate from eligible_universe because they
+    are allowed to depend on future label availability and on whether the
+    future target crosses an unresolved mechanical corporate action.
+    """
+    df = df.copy()
+
+    for horizon in HORIZONS:
+        target_col = (
+            f"target_next_open_to_close_{horizon}d"
+        )
+        unsafe_col = (
+            f"unsafe_target_window_{horizon}d"
+        )
+        usable_col = (
+            f"target_usable_{horizon}d"
+        )
+        training_col = (
+            f"training_eligible_{horizon}d"
+        )
+
+        df[usable_col] = (
+            df[target_col].notna()
+            & ~df[unsafe_col]
+        )
+
+        df[training_col] = (
+            df["eligible_universe"]
+            & df[usable_col]
+        )
 
     return df
 
@@ -1175,9 +1235,6 @@ def build_research_panel(
         max_lookback=max(
             RETURN_LOOKBACKS
         ),
-        max_forward_horizon=max(
-            HORIZONS
-        ),
     )
 
     print(
@@ -1192,6 +1249,14 @@ def build_research_panel(
             min_median_turnover
         ),
         min_active_ratio=min_active_ratio,
+    )
+
+    print(
+        "Building horizon-specific training "
+        "eligibility flags..."
+    )
+    panel = add_training_flags(
+        panel
     )
 
     report = validate_panel(panel)
@@ -1286,11 +1351,27 @@ def build_research_panel(
         "unsafe_mechanical_actions": int(
             len(unsafe_actions)
         ),
-        "rows_censored_for_unsafe_mechanical_actions": int(
+        "rows_with_unsafe_feature_history": int(
             panel[
-                "unsafe_mechanical_action_window"
+                "unsafe_feature_window"
             ].sum()
         ),
+        "unsafe_target_rows_by_horizon": {
+            str(h): int(
+                panel[
+                    f"unsafe_target_window_{h}d"
+                ].sum()
+            )
+            for h in HORIZONS
+        },
+        "training_eligible_rows_by_horizon": {
+            str(h): int(
+                panel[
+                    f"training_eligible_{h}d"
+                ].sum()
+            )
+            for h in HORIZONS
+        },
         "output_root": str(
             output_root
         ),
@@ -1427,9 +1508,14 @@ def self_test() -> None:
         df
     )
     out = add_forward_targets(out)
-    out[
-        "unsafe_mechanical_action_window"
-    ] = False
+
+    for horizon in HORIZONS:
+        out[
+            f"unsafe_target_window_{horizon}d"
+        ] = False
+
+    out["unsafe_feature_window"] = False
+    out["unsafe_mechanical_action_window"] = False
 
     # On t, the 3-day realistic target is:
     # buy at open(t+1), sell at close(t+3).
