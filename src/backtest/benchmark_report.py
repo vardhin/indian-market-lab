@@ -855,6 +855,74 @@ def main() -> None:
         )
     )
 
+    research_dates = pd.Index(
+        sorted(
+            panel_dates
+        )
+    )
+
+    for index_name in (
+        "NIFTY 50",
+        "NIFTY 500",
+    ):
+        source = index_data.loc[
+            index_data[
+                "requested_index"
+            ].eq(index_name)
+        ].copy()
+
+        if source.empty:
+            raise RuntimeError(
+                f"Missing {index_name} "
+                "from index benchmark dataset."
+            )
+
+        source_dates = pd.Index(
+            pd.to_datetime(
+                source["date"],
+                errors="coerce",
+            )
+            .dropna()
+            .dt.normalize()
+            .unique()
+        )
+
+        overlap = research_dates.intersection(
+            source_dates
+        )
+
+        coverage = (
+            len(overlap)
+            / len(research_dates)
+            if len(research_dates)
+            else 0.0
+        )
+
+        latest = pd.Timestamp(
+            source_dates.max()
+        ).normalize()
+
+        end_gap_days = int(
+            (
+                evaluation_end
+                - latest
+            ).days
+        )
+
+        if (
+            coverage < 0.98
+            or end_gap_days > 10
+        ):
+            raise RuntimeError(
+                f"{index_name} benchmark coverage is incomplete: "
+                f"{len(overlap):,}/{len(research_dates):,} "
+                f"research dates ({coverage:.1%}), "
+                f"latest index date={latest.date()}, "
+                f"evaluation end={evaluation_end.date()}. "
+                "Re-run src/data/index_benchmarks.py with the current "
+                "small-window downloader before generating this report."
+            )
+
     costs = CostProfile(
         brokerage_per_order=(
             args.brokerage_per_order
