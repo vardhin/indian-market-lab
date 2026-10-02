@@ -182,6 +182,62 @@ The raw `equities_resolved` dataset is never modified. Dividends, rights,
 demergers and merger/scheme events are also not folded into these mechanical
 OHLCV factors; they remain separate event/cash-flow layers.
 
+
+## Build the point-in-time research panel
+
+After adjusted OHLCV is available:
+
+```bash
+uv run python src/data/build_research_panel.py --self-test
+uv run python src/data/build_research_panel.py
+```
+
+The default universe is designed for an after-close signal and next-session-open
+entry:
+
+- at least 120 prior trading observations
+- raw/as-traded close >= INR 10
+- trailing 20-observation median turnover >= INR 5,000,000
+- positive-volume ratio over the trailing 20 observations >= 90%
+- complete observation coverage across the most recent 20 NSE market sessions
+- a valid next NSE market-session open
+- no unresolved split/bonus event inside the feature/target contamination window
+
+All thresholds remain explicit CLI parameters.
+
+Features use only information available through the close of date `t`. Lagged
+returns are accepted only when they line up with the actual NSE market-session
+index, so a suspension or missing security row cannot masquerade as a normal
+1/5/20-day return.
+
+Targets are generated separately:
+
+```text
+signal: close(t)
+entry:  open(t+1)
+exit:   close(t+h), h in {1,3,5,10,20}
+```
+
+The builder also writes close-to-close targets for forecasting diagnostics.
+Neither target family is used in feature calculation or universe selection.
+
+Unparsed or unmapped split/bonus events are not manually guessed. Instead,
+rows whose 60-session feature history or 20-session forward target could cross
+such an event are retained but marked
+`unsafe_mechanical_action_window=True` and excluded from
+`eligible_universe`.
+
+Outputs:
+
+```text
+data/processed/research_panel/
+└── date=YYYY-MM-DD/data.parquet
+
+reports/
+├── research_panel_summary.json
+└── research_universe_by_year.csv
+```
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
