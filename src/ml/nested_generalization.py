@@ -231,6 +231,14 @@ def build_annual_oos_predictions(
             exist_ok=True,
         )
 
+        legacy_path = (
+            root
+            / "reports/ml/nested_generalization/"
+            "predictions"
+            / model_name
+            / f"{year}.parquet"
+        )
+
         if (
             path.is_file()
             and not rebuild
@@ -245,6 +253,35 @@ def build_annual_oos_predictions(
             print(
                 f"OOS {year}: reused "
                 f"{count:,} cached scores"
+            )
+        elif (
+            not rebuild
+            and model_name == "hist_gb"
+            and random_state == 42
+            and legacy_path.is_file()
+        ):
+            count = (
+                attach_prediction_file(
+                    df,
+                    path=legacy_path,
+                    year=year,
+                )
+            )
+            legacy = pd.read_parquet(
+                legacy_path
+            )
+            path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            legacy.to_parquet(
+                path,
+                index=False,
+                compression="zstd",
+            )
+            print(
+                f"OOS {year}: migrated "
+                f"{count:,} legacy cached scores"
             )
         else:
             fold_start = pd.Timestamp(
