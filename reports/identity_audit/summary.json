@@ -1,0 +1,26 @@
+{
+  "identity_rows": 6605639,
+  "unresolved_rows": 17472,
+  "unresolved_episodes": 136,
+  "unresolved_symbols": 133,
+  "unresolved_total_turnover": 614592321447.8,
+  "priority_counts": {
+    "P3": 98,
+    "P2": 22,
+    "P1_economic_relevance": 16
+  },
+  "identity_risk_counts": {
+    "no_anchor": 136
+  },
+  "economic_relevance_band_counts": {
+    "C_tail_5pct": 98,
+    "B_next_15pct": 22,
+    "A_top_80pct": 16
+  },
+  "missing_market_partitions": [],
+  "outputs": {
+    "parquet": "reports/identity_audit/unresolved_identity_audit.parquet",
+    "csv": "reports/identity_audit/unresolved_identity_audit.csv",
+    "markdown": "reports/identity_audit/unresolved_identity_audit.md"
+  }
+}

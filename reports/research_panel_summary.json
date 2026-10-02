@@ -1,0 +1,41 @@
+{
+  "rows": 6193122,
+  "dates": 4136,
+  "securities": 3678,
+  "eligible_rows": 3339472,
+  "eligible_dates": 4016,
+  "eligible_securities": 2886,
+  "nonfinite_feature_values": 0,
+  "target_nonnull_counts": {
+    "target_next_open_to_close_1d": 6151859,
+    "target_close_to_close_1d": 6151859,
+    "target_next_open_to_close_3d": 6093905,
+    "target_close_to_close_3d": 6093905,
+    "target_next_open_to_close_5d": 6048942,
+    "target_close_to_close_5d": 6048942,
+    "target_next_open_to_close_10d": 5958086,
+    "target_close_to_close_10d": 5958086,
+    "target_next_open_to_close_20d": 5814734,
+    "target_close_to_close_20d": 5814734
+  },
+  "partitions": 4136,
+  "feature_timestamp": "after_close_t",
+  "trade_entry_convention": "next_trading_session_open",
+  "universe_parameters": {
+    "min_history_observations": 120,
+    "min_raw_close": 10.0,
+    "min_trailing_20d_median_turnover": 5000000.0,
+    "min_trailing_20d_active_day_ratio": 0.9
+  },
+  "horizons": [
+    1,
+    3,
+    5,
+    10,
+    20
+  ],
+  "unsafe_mechanical_actions": 325,
+  "rows_censored_for_unsafe_mechanical_actions": 12430,
+  "output_root": "/home/vardhin/Documents/git/indian-market-lab/data/processed/research_panel",
+  "universe_by_year": "/home/vardhin/Documents/git/indian-market-lab/reports/research_universe_by_year.csv"
+}

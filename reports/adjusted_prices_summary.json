@@ -1,0 +1,31 @@
+{
+  "candidate_mechanical_actions": 998,
+  "mapped_actions": 837,
+  "unmapped_or_ambiguous_actions": 161,
+  "mapping_status_counts": {
+    "mapped": 837,
+    "unmapped": 161
+  },
+  "mapping_method_counts": {
+    "exact_ex_date": 836,
+    "bracket_same_identity": 1
+  },
+  "collapsed_adjustment_events": 818,
+  "affected_canonical_securities": 696,
+  "adjusted_dataset": {
+    "partitions": 4136,
+    "rows": 6193122,
+    "mechanically_adjusted_rows": 710499,
+    "min_price_adjustment_factor": 0.03333333333333333,
+    "max_volume_adjustment_factor": 30.0,
+    "output_root": "/home/vardhin/Documents/git/indian-market-lab/data/processed/equities_adjusted"
+  },
+  "outputs": {
+    "mapping_parquet": "/home/vardhin/Documents/git/indian-market-lab/data/processed/corporate_actions/mechanical_action_identity_map.parquet",
+    "mapping_csv": "/home/vardhin/Documents/git/indian-market-lab/data/processed/corporate_actions/mechanical_action_identity_map.csv",
+    "events_parquet": "/home/vardhin/Documents/git/indian-market-lab/data/processed/corporate_actions/mechanical_adjustment_events.parquet",
+    "events_csv": "/home/vardhin/Documents/git/indian-market-lab/data/processed/corporate_actions/mechanical_adjustment_events.csv",
+    "unmapped_csv": "/home/vardhin/Documents/git/indian-market-lab/reports/corporate_actions_unmapped_mechanical.csv",
+    "adjusted_root": "/home/vardhin/Documents/git/indian-market-lab/data/processed/equities_adjusted"
+  }
+}

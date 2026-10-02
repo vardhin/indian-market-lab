@@ -1,0 +1,37 @@
+{
+  "requested_from": "2010-01-01",
+  "requested_to": "2026-09-30",
+  "rows": 35464,
+  "symbols": 2980,
+  "ex_date_min": "2010-01-04",
+  "ex_date_max": "2026-09-30",
+  "action_type_counts": {
+    "dividend": 20879,
+    "general_meeting": 11011,
+    "interest": 1110,
+    "bonus": 619,
+    "split_or_consolidation": 543,
+    "other": 400,
+    "rights": 348,
+    "buyback": 347,
+    "demerger": 118,
+    "merger_or_scheme": 89
+  },
+  "parse_status_counts": {
+    "not_share_count_action": 34302,
+    "bonus_parsed": 598,
+    "split_parsed": 400,
+    "split_unparsed": 143,
+    "bonus_unparsed": 21
+  },
+  "share_count_actions": 1162,
+  "auto_adjustable_share_count_actions": 998,
+  "unparsed_share_count_actions": 164,
+  "cash_dividend_rows_with_amount": 14942,
+  "outputs": {
+    "parquet": "/home/vardhin/Documents/git/indian-market-lab/data/processed/corporate_actions/nse_corporate_actions.parquet",
+    "csv": "/home/vardhin/Documents/git/indian-market-lab/data/processed/corporate_actions/nse_corporate_actions.csv",
+    "raw_cache": "/home/vardhin/Documents/git/indian-market-lab/data/raw/corporate_actions"
+  },
+  "unparsed_share_count_path": "/home/vardhin/Documents/git/indian-market-lab/reports/corporate_actions_unparsed_share_count.csv"
+}
