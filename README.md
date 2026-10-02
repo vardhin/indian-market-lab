@@ -474,6 +474,113 @@ reports/benchmarks/
 └── benchmark_report_summary.json
 ```
 
+
+## Classical ML temporal experiment
+
+The first learned-model experiment is deliberately classical and
+cross-sectional. It predicts the relative attractiveness of each eligible NSE
+security rather than trying to forecast an exact rupee price.
+
+Target:
+
+```text
+signal time: close(t)
+entry:       open(t+1)
+exit:        close(t+20)
+label:       within-date percentile rank of next-open -> close(t+20) return
+```
+
+Feature set is point-in-time only and currently includes short/medium-term
+returns, moving-average distance, high/low distance, volatility, range,
+intraday/gap return, turnover/volume z-scores, activity ratio and log trailing
+turnover.
+
+The fixed temporal protocol is:
+
+```text
+TRAIN
+2010-06-28 -> 2018-12-31
+purge final 20 market sessions from labels
+
+VALIDATION
+2019-01-01 -> 2021-12-31
+purge final 20 market sessions from labels
+
+HELD-OUT TEST
+2022-01-01 -> 2026-09-30
+```
+
+The split is never random. Boundary purging prevents a training or validation
+label from using an exit price that lies beyond that split's information
+cutoff.
+
+Default candidate models:
+
+```text
+ridge
+hist_gb
+```
+
+`random_forest` is implemented as an optional heavier baseline.
+
+Model selection uses only validation **mean daily cross-sectional Spearman IC**.
+After selection, that algorithm is refit on purged train+validation data and
+scored once on the 2022-2026 held-out test period.
+
+The final test predictions are run through the same delivery-equity backtester
+used by deterministic strategies: INR 50,000 initial capital, integer shares,
+next-session-open entry, 20-session close exit, mapped split/bonus handling,
+current-2026 transaction-cost assumptions and the same unresolved-action
+censor.
+
+Run:
+
+```bash
+uv sync
+
+uv run python src/backtest/baselines.py --self-test
+uv run python src/ml/classical.py --self-test
+uv run python src/ml/classical.py
+```
+
+The default final portfolio comparison evaluates the selected model at top-5
+and top-10 against matching 60-day momentum and liquidity controls plus NIFTY
+50 and NIFTY 500 price-index benchmarks.
+
+For an optional random-forest candidate:
+
+```bash
+uv run python src/ml/classical.py \
+  --models ridge hist_gb random_forest
+```
+
+By default all available training rows are used. For a quick computational
+smoke test without changing the experiment code:
+
+```bash
+uv run python src/ml/classical.py \
+  --max-train-rows 250000 \
+  --max-refit-rows 400000
+```
+
+Do not use capped-row results as the final paper result.
+
+Outputs:
+
+```text
+reports/ml/classical/
+├── validation_model_comparison.csv
+├── test_portfolio_comparison.csv
+├── test_predictions.parquet
+├── test_equity_curves_long.csv
+├── experiment_summary.json
+└── models/
+    └── <selected_model>_selected.joblib
+```
+
+The held-out test comparison, rather than training fit statistics, is the
+primary result.
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
