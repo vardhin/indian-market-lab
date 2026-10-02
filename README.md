@@ -85,6 +85,56 @@ data/processed/
 └── equities_resolved/      # resolved company-equity research universe
 ```
 
+
+## Corporate actions
+
+Corporate actions are ingested separately from raw prices. The first stage
+downloads and normalizes NSE equity corporate actions without modifying the
+historical OHLCV dataset:
+
+```bash
+uv sync
+uv run python src/data/corporate_actions.py \
+  --from 2010-01-01 \
+  --to 2026-09-30
+```
+
+Before the full fetch, the parser can be checked locally:
+
+```bash
+uv run python src/data/corporate_actions.py --self-test
+```
+
+Outputs:
+
+```text
+data/raw/corporate_actions/                       # cached NSE JSON windows
+data/processed/corporate_actions/
+├── nse_corporate_actions.parquet
+└── nse_corporate_actions.csv
+reports/
+├── corporate_actions_summary.json
+└── corporate_actions_unparsed_share_count.csv   # only when needed
+```
+
+The ingestion layer classifies dividends, bonuses, splits/consolidations,
+rights, demergers, mergers/schemes, buybacks and other actions.
+
+Only mechanically deterministic share-count actions are marked
+`auto_adjustable`:
+
+- bonus issue: post-action share multiplier = `(new + existing) / existing`
+- split/consolidation: post-action share multiplier =
+  `old face value / new face value`
+
+Dividends are stored as cash-flow information rather than silently baked into
+OHLC prices. Rights, demergers, mergers and schemes are preserved and flagged
+for separate treatment rather than assigned guessed adjustment factors.
+
+The next stage maps these events onto the resolved historical security
+lineages and writes a separate adjusted-price research layer while preserving
+the raw NSE prices unchanged.
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
