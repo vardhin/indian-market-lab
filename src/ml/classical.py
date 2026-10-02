@@ -1293,7 +1293,25 @@ def add_index_benchmarks(
         )
 
         rows.append({
-            **metric,
+            "name": index_name,
+            "kind": "price_index",
+            "starting_capital": metric[
+                "start_value"
+            ],
+            "ending_equity": metric[
+                "end_value"
+            ],
+            "total_return": metric[
+                "total_return"
+            ],
+            "cagr": metric["cagr"],
+            "max_drawdown": metric[
+                "max_drawdown"
+            ],
+            "sharpe": metric["sharpe"],
+            "annualized_volatility": metric[
+                "annualized_volatility"
+            ],
             "strategy": None,
             "top_k": None,
             "holding_sessions": None,
