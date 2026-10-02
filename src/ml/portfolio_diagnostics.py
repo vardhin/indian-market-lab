@@ -2233,6 +2233,7 @@ def main() -> None:
     ) = final_walkforward_backtests(
         df,
         events,
+        root=root,
         score_mask=(
             walkforward_score_mask
         ),
