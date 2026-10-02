@@ -135,6 +135,53 @@ The next stage maps these events onto the resolved historical security
 lineages and writes a separate adjusted-price research layer while preserving
 the raw NSE prices unchanged.
 
+
+### Build mechanically adjusted OHLCV
+
+After the corporate-action ingest, map split/bonus events to the resolved
+historical security lineage and build a separate backward-adjusted research
+layer:
+
+```bash
+uv run python src/data/adjust_prices.py --self-test
+uv run python src/data/adjust_prices.py
+```
+
+The builder:
+
+- maps each split/bonus to a resolved `canonical_security_id`
+- prefers an exact ex-date match
+- uses only a two-sided same-identity bracket as fallback
+- never accepts a one-sided fallback
+- compounds multiple same-day mechanical actions multiplicatively
+- applies factors only to rows strictly before the action ex-date
+- handles missing ex-date partitions by date ordering
+- preserves every raw NSE price/volume column
+- writes separate `adj_open`, `adj_high`, `adj_low`, `adj_close`,
+  `adj_last`, and `adj_volume` columns
+- writes diagnostics for unmapped or ambiguous actions
+
+Outputs:
+
+```text
+data/processed/corporate_actions/
+├── mechanical_action_identity_map.parquet
+├── mechanical_action_identity_map.csv
+├── mechanical_adjustment_events.parquet
+└── mechanical_adjustment_events.csv
+
+data/processed/equities_adjusted/
+└── date=YYYY-MM-DD/data.parquet
+
+reports/
+├── adjusted_prices_summary.json
+└── corporate_actions_unmapped_mechanical.csv
+```
+
+The raw `equities_resolved` dataset is never modified. Dividends, rights,
+demergers and merger/scheme events are also not folded into these mechanical
+OHLCV factors; they remain separate event/cash-flow layers.
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
