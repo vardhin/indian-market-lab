@@ -1943,6 +1943,10 @@ def main() -> None:
             "ridge",
             "hist_gb",
             "random_forest",
+            "extra_trees",
+            "xgboost",
+            "lightgbm",
+            "catboost",
         ],
         default="hist_gb",
     )
