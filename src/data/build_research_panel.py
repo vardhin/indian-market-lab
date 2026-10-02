@@ -271,6 +271,26 @@ def load_adjusted_panel(
             )
         )
 
+    trading_dates = (
+        pd.Index(
+            sorted(
+                df["date"].dropna().unique()
+            )
+        )
+    )
+    trading_index = {
+        pd.Timestamp(day): index
+        for index, day in enumerate(
+            trading_dates
+        )
+    }
+
+    df["market_day_index"] = (
+        df["date"]
+        .map(trading_index)
+        .astype("Int64")
+    )
+
     return (
         df.sort_values(
             [
@@ -336,11 +356,23 @@ def add_point_in_time_features(
         lagged = group[
             "adj_close"
         ].shift(lookback)
+        lagged_market_index = group[
+            "market_day_index"
+        ].shift(lookback)
+
+        exact_market_lag = (
+            lagged_market_index
+            .eq(
+                df["market_day_index"]
+                - lookback
+            )
+        )
 
         df[f"return_{lookback}d"] = (
             df["adj_close"]
             / lagged.where(
-                lagged > 0
+                (lagged > 0)
+                & exact_market_lag
             )
             - 1.0
         )
@@ -506,6 +538,17 @@ def add_point_in_time_features(
         )
     )
 
+    lagged_market_index_19 = group[
+        "market_day_index"
+    ].shift(19)
+
+    df["recent_20_sessions_complete"] = (
+        df["history_observations"].ge(20)
+        & lagged_market_index_19.eq(
+            df["market_day_index"] - 19
+        )
+    )
+
     df = df.drop(
         columns=["_active_day"]
     )
@@ -539,18 +582,43 @@ def add_forward_targets(
     next_open = group[
         "adj_open"
     ].shift(-1)
+    next_market_index = group[
+        "market_day_index"
+    ].shift(-1)
+
+    exact_next_session = (
+        next_market_index.eq(
+            df["market_day_index"] + 1
+        )
+    )
 
     for horizon in HORIZONS:
         future_close = group[
             "adj_close"
         ].shift(-horizon)
+        future_market_index = group[
+            "market_day_index"
+        ].shift(-horizon)
+
+        exact_exit_session = (
+            future_market_index.eq(
+                df["market_day_index"]
+                + horizon
+            )
+        )
+
+        valid_realistic_target = (
+            exact_next_session
+            & exact_exit_session
+        )
 
         df[
             f"target_next_open_to_close_{horizon}d"
         ] = (
             future_close
             / next_open.where(
-                next_open > 0
+                (next_open > 0)
+                & valid_realistic_target
             )
             - 1.0
         )
@@ -558,7 +626,9 @@ def add_forward_targets(
         df[
             f"target_close_to_close_{horizon}d"
         ] = (
-            future_close
+            future_close.where(
+                exact_exit_session
+            )
             / df["adj_close"].where(
                 df["adj_close"] > 0
             )
@@ -604,13 +674,23 @@ def add_universe_flags(
         .ge(min_active_ratio)
     )
 
+    group = df.groupby(
+        "canonical_security_id",
+        sort=False,
+    )
+
+    next_open = group[
+        "adj_open"
+    ].shift(-1)
+    next_market_index = group[
+        "market_day_index"
+    ].shift(-1)
+
     df["has_next_session_open"] = (
-        df.groupby(
-            "canonical_security_id",
-            sort=False,
-        )["adj_open"]
-        .shift(-1)
-        .notna()
+        next_open.notna()
+        & next_market_index.eq(
+            df["market_day_index"] + 1
+        )
     )
 
     df["eligible_universe"] = (
@@ -618,6 +698,7 @@ def add_universe_flags(
         & df["price_eligible"]
         & df["liquidity_eligible"]
         & df["activity_eligible"]
+        & df["recent_20_sessions_complete"]
         & df["has_next_session_open"]
     )
 
@@ -661,13 +742,11 @@ def validate_panel(
             errors="coerce",
         )
         nonfinite_features += int(
-            s.map(
-                lambda x: (
-                    pd.notna(x)
-                    and not math.isfinite(
-                        float(x)
-                    )
-                )
+            s.isin(
+                [
+                    float("inf"),
+                    float("-inf"),
+                ]
             ).sum()
         )
 
@@ -1056,6 +1135,9 @@ def self_test() -> None:
             108,
         ],
         "adj_volume": [1000] * 8,
+        "market_day_index": list(
+            range(8)
+        ),
     })
 
     out = add_point_in_time_features(
