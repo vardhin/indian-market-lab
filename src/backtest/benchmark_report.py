@@ -296,6 +296,11 @@ def calendar_returns(
     name: str,
     value_col: str = "equity",
 ) -> pd.DataFrame:
+    """
+    Calendar returns use previous year-end -> current year-end whenever the
+    previous year exists in the evaluation window. The first (partial) year is
+    reported from the evaluation start and explicitly marked partial.
+    """
     d = (
         curve[
             [
@@ -305,6 +310,10 @@ def calendar_returns(
         ]
         .dropna()
         .sort_values("date")
+        .drop_duplicates(
+            "date",
+            keep="last",
+        )
         .copy()
     )
 
@@ -314,52 +323,87 @@ def calendar_returns(
         ).dt.year
     )
 
-    rows: list[
-        dict
-    ] = []
+    yearly = (
+        d.groupby(
+            "year",
+            sort=True,
+        )
+        .agg(
+            first_date=(
+                "date",
+                "first",
+            ),
+            last_date=(
+                "date",
+                "last",
+            ),
+            first_value=(
+                value_col,
+                "first",
+            ),
+            last_value=(
+                value_col,
+                "last",
+            ),
+        )
+        .reset_index()
+    )
 
-    for year, group in d.groupby(
-        "year",
-        sort=True,
+    rows: list[dict] = []
+    previous_last: float | None = None
+
+    for row in yearly.itertuples(
+        index=False
     ):
-        if len(group) < 2:
-            continue
+        if previous_last is None:
+            start_value = float(
+                row.first_value
+            )
+            partial_year = True
+        else:
+            start_value = float(
+                previous_last
+            )
+            partial_year = False
 
-        start = float(
-            group[
-                value_col
-            ].iloc[0]
-        )
-        end = float(
-            group[
-                value_col
-            ].iloc[-1]
+        end_value = float(
+            row.last_value
         )
 
-        if start <= 0:
+        if start_value <= 0:
+            previous_last = (
+                end_value
+            )
             continue
 
         rows.append({
             "name": name,
-            "year": int(year),
+            "year": int(
+                row.year
+            ),
             "return": (
-                end / start - 1.0
+                end_value
+                / start_value
+                - 1.0
+            ),
+            "partial_year": (
+                partial_year
             ),
             "first_date": str(
                 pd.Timestamp(
-                    group[
-                        "date"
-                    ].iloc[0]
+                    row.first_date
                 ).date()
             ),
             "last_date": str(
                 pd.Timestamp(
-                    group[
-                        "date"
-                    ].iloc[-1]
+                    row.last_date
                 ).date()
             ),
         })
+
+        previous_last = (
+            end_value
+        )
 
     return pd.DataFrame(
         rows
@@ -673,10 +717,56 @@ def main() -> None:
         root
     )
 
+    eligible_dates = (
+        panel.loc[
+            panel[
+                "eligible_universe"
+            ].fillna(False),
+            "date",
+        ]
+        .dropna()
+        .sort_values()
+    )
+
+    if eligible_dates.empty:
+        raise RuntimeError(
+            "Research panel contains no "
+            "point-in-time eligible rows."
+        )
+
+    evaluation_start = (
+        pd.Timestamp(
+            eligible_dates.iloc[0]
+        ).normalize()
+    )
+    evaluation_end = (
+        pd.Timestamp(
+            panel["date"].max()
+        ).normalize()
+    )
+
+    # Exclude the feature warm-up period from EVERY comparator. Before this
+    # date the strategy could not legally emit a signal because the historical
+    # feature window was not yet available.
+    panel = panel.loc[
+        panel["date"].between(
+            evaluation_start,
+            evaluation_end,
+            inclusive="both",
+        )
+    ].copy()
+
     panel_dates = set(
         pd.to_datetime(
             panel["date"]
         ).dt.normalize()
+    )
+
+    print(
+        "Evaluation window: "
+        f"{evaluation_start.date()} "
+        "-> "
+        f"{evaluation_end.date()}"
     )
 
     index_data = (
@@ -1100,6 +1190,16 @@ def main() -> None:
         ),
         "initial_capital": float(
             args.capital
+        ),
+        "evaluation_start": str(
+            evaluation_start.date()
+        ),
+        "evaluation_end": str(
+            evaluation_end.date()
+        ),
+        "evaluation_start_policy": (
+            "first date with any point-in-time eligible security; "
+            "feature warm-up period excluded from all comparators"
         ),
         "strategy_cost_profile": (
             "current_2026_delivery"
