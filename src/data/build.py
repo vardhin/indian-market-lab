@@ -639,6 +639,158 @@ def consolidate(
     return full
 
 
+
+def daily_partitions_complete(
+    processed_root: Path,
+    day: pd.Timestamp,
+) -> bool:
+    """Return True only when both daily research partitions exist and are non-empty."""
+    date_tag = str(pd.Timestamp(day).date())
+    paths = (
+        processed_root / "eq_all" / f"date={date_tag}" / "data.parquet",
+        processed_root / "equities" / f"date={date_tag}" / "data.parquet",
+    )
+    return all(p.is_file() and p.stat().st_size > 0 for p in paths)
+
+
+def load_progress_states(progress_path: Path) -> dict[str, str]:
+    """Load the latest recorded status for each date from the append-only progress log."""
+    states: dict[str, str] = {}
+
+    if not progress_path.exists():
+        return states
+
+    with progress_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            date = record.get("date")
+            status = record.get("status")
+
+            if date and status:
+                states[str(date)] = str(status)
+
+    return states
+
+
+def append_progress(
+    progress_path: Path,
+    status: dict,
+) -> None:
+    """Append one completed weekday attempt to the resume log."""
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with progress_path.open("a") as f:
+        f.write(json.dumps(status, default=str) + "\n")
+
+
+def raw_day_is_empty(
+    raw_root: Path,
+    day: pd.Timestamp,
+) -> bool:
+    """
+    Compatibility fallback for backfills created before build_progress.jsonl.
+
+    The old downloader created the YYYY/MM/DD directory before attempting a
+    fetch. On a confirmed missing bhavcopy/holiday it removed the failed
+    download, leaving an empty directory. Parser failures, by contrast, leave
+    the downloaded ZIP/CSV behind. This lets --resume recover old runs such as
+    a 2010->2026 backfill without re-querying every historical holiday.
+    """
+    raw_dir = raw_root / pd.Timestamp(day).strftime("%Y/%m/%d")
+
+    if not raw_dir.is_dir():
+        return False
+
+    return not any(p.is_file() for p in raw_dir.rglob("*"))
+
+
+def resume_skip_status(
+    day: pd.Timestamp,
+    raw_root: Path,
+    processed_root: Path,
+    progress_states: dict[str, str],
+) -> dict | None:
+    """
+    Return a synthetic status when --resume can safely skip this weekday.
+
+    Crucially this is coverage-aware rather than "latest-date" based. A user
+    may already have isolated 2024/2026 test partitions while a long historical
+    backfill stopped in 2020; those later partitions must not cause the builder
+    to skip the missing years in between.
+    """
+    day = pd.Timestamp(day).normalize()
+    date_tag = str(day.date())
+
+    if daily_partitions_complete(processed_root, day):
+        return {
+            "date": date_tag,
+            "status": "existing",
+            "source_format": (
+                "udiff" if day >= UDIFF_START else "legacy"
+            ),
+        }
+
+    if progress_states.get(date_tag) == "no_bhavcopy":
+        return {
+            "date": date_tag,
+            "status": "known_no_bhavcopy",
+        }
+
+    if raw_day_is_empty(raw_root, day):
+        return {
+            "date": date_tag,
+            "status": "legacy_no_bhavcopy",
+        }
+
+    return None
+
+
+def summarize_resume(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    raw_root: Path,
+    processed_root: Path,
+    progress_states: dict[str, str],
+) -> dict:
+    """Summarize what --resume will reuse and identify the first unfinished weekday."""
+    existing = 0
+    known_missing = 0
+    first_pending: pd.Timestamp | None = None
+
+    for day in pd.date_range(start, end, freq="D"):
+        if day.weekday() >= 5:
+            continue
+
+        status = resume_skip_status(
+            day,
+            raw_root,
+            processed_root,
+            progress_states,
+        )
+
+        if status is None:
+            first_pending = day
+            break
+
+        if status["status"] == "existing":
+            existing += 1
+        else:
+            known_missing += 1
+
+    return {
+        "existing_days_before_frontier": existing,
+        "known_no_bhavcopy_before_frontier": known_missing,
+        "first_pending": first_pending,
+    }
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -676,6 +828,15 @@ def main() -> None:
     )
 
     ap.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume a partitioned backfill without rebuilding completed days. "
+            "Requires --no-consolidate."
+        ),
+    )
+
+    ap.add_argument(
         "--resolve-identities",
         action="store_true",
         help=(
@@ -704,6 +865,12 @@ def main() -> None:
             "--to must be >= --from"
         )
 
+    if args.resume and not args.no_consolidate:
+        raise SystemExit(
+            "--resume requires --no-consolidate. "
+            "Resume daily partitions first; consolidate separately afterwards."
+        )
+
     root = Path(args.root).resolve()
 
     raw = root / "data/raw"
@@ -721,6 +888,38 @@ def main() -> None:
             parents=True,
             exist_ok=True,
         )
+
+    progress_path = reports / "build_progress.jsonl"
+    progress_states = load_progress_states(progress_path)
+
+    if args.resume:
+        resume_info = summarize_resume(
+            start,
+            end,
+            raw,
+            processed,
+            progress_states,
+        )
+        first_pending = resume_info["first_pending"]
+
+        print("Resume scan:")
+        print(
+            f"  Existing trading-day partitions before frontier: "
+            f"{resume_info['existing_days_before_frontier']:,}"
+        )
+        print(
+            f"  Previously checked no-bhavcopy weekdays: "
+            f"{resume_info['known_no_bhavcopy_before_frontier']:,}"
+        )
+        print(
+            "  First unfinished weekday: "
+            + (
+                str(first_pending.date())
+                if first_pending is not None
+                else "none"
+            )
+        )
+        print()
 
     print("Loading NSE reference lists...")
 
@@ -752,6 +951,17 @@ def main() -> None:
             })
             continue
 
+        if args.resume:
+            skipped = resume_skip_status(
+                day,
+                raw,
+                processed,
+                progress_states,
+            )
+            if skipped is not None:
+                statuses.append(skipped)
+                continue
+
         print(
             f"[{day.date()}] ",
             end="",
@@ -766,6 +976,8 @@ def main() -> None:
         )
 
         statuses.append(status)
+        append_progress(progress_path, status)
+        progress_states[status["date"]] = status["status"]
 
         if status["status"] != "ok":
             print("no bhavcopy")
@@ -788,10 +1000,15 @@ def main() -> None:
         s for s in statuses
         if s["status"] == "ok"
     ]
+    existing_days = [
+        s for s in statuses
+        if s["status"] == "existing"
+    ]
+    successful_days = ok_days + existing_days
 
-    if not ok_days:
+    if not successful_days:
         raise SystemExit(
-            "No trading days were built."
+            "No trading-day partitions are available in the requested range."
         )
 
     if not args.no_consolidate:
@@ -845,14 +1062,16 @@ def main() -> None:
         "requested_from": str(start.date()),
         "requested_to": str(end.date()),
         "udiff_start": str(UDIFF_START.date()),
-        "successful_trading_days": len(ok_days),
+        "successful_trading_days": len(successful_days),
+        "new_trading_days_built": len(ok_days),
+        "existing_trading_days_reused": len(existing_days),
         "legacy_days": sum(
             s.get("source_format") == "legacy"
-            for s in ok_days
+            for s in successful_days
         ),
         "udiff_days": sum(
             s.get("source_format") == "udiff"
-            for s in ok_days
+            for s in successful_days
         ),
         "days": statuses,
         **summary,
@@ -890,8 +1109,15 @@ def main() -> None:
 
     print("\n=== BUILD COMPLETE ===")
     print(
-        f"Trading days: {len(ok_days):,}"
+        f"Trading days available: {len(successful_days):,}"
     )
+    if args.resume:
+        print(
+            f"New days built:          {len(ok_days):,}"
+        )
+        print(
+            f"Existing days reused:    {len(existing_days):,}"
+        )
     print(
         f"Legacy days:  {report['legacy_days']:,}"
     )
