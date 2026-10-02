@@ -854,6 +854,7 @@ def run_persistent_backtest(
         mandatory_sell: list[
             str
         ] = []
+        censored_slots = 0
         replacement_pool: list[
             str
         ] = []
@@ -882,6 +883,7 @@ def run_persistent_backtest(
                     cid
                 )
                 unsafe_censors += 1
+                censored_slots += 1
                 continue
 
             rank = int(
@@ -1010,7 +1012,8 @@ def run_persistent_backtest(
             - planned_holding_count
             - len(
                 accepted_replacements
-            ),
+            )
+            - censored_slots,
         )
 
         selected_buys = [
@@ -1082,6 +1085,9 @@ def run_persistent_backtest(
                 len(
                     mandatory_sell
                 )
+            ),
+            "censored_cash_slots": int(
+                censored_slots
             ),
             "rank_replacements": int(
                 len(
