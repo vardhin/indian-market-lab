@@ -9,7 +9,11 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
-from quant_metrics import compute_performance_metrics
+from quant_metrics import (
+    captioned_metric_rows,
+    compute_performance_metrics,
+    glossary_frame,
+)
 
 
 STRATEGIES = {
@@ -622,6 +626,7 @@ def run_backtest(
     costs: CostProfile,
     score_column: str | None = None,
     score_direction: float = 1.0,
+    annual_risk_free_rate: float = 0.0,
 ) -> dict:
     if (
         score_column is None
@@ -1197,6 +1202,9 @@ def run_backtest(
         equity_df,
         trades_df,
         initial_capital=initial_capital,
+        annual_risk_free_rate=(
+            annual_risk_free_rate
+        ),
     )
 
     metrics.update({
@@ -1467,6 +1475,17 @@ def main() -> None:
         default=5.0,
     )
     ap.add_argument(
+        "--risk-free-rate",
+        type=float,
+        default=0.0,
+        help=(
+            "Annual risk-free rate as a decimal "
+            "used by Sharpe/Sortino, e.g. 0.065 "
+            "for 6.5 percent. Default 0 preserves "
+            "earlier experiment comparability."
+        ),
+    )
+    ap.add_argument(
         "--zero-costs",
         action="store_true",
         help=(
@@ -1502,6 +1521,11 @@ def main() -> None:
     if args.slippage_bps < 0:
         raise SystemExit(
             "--slippage-bps must be >= 0"
+        )
+    if args.risk_free_rate <= -1.0:
+        raise SystemExit(
+            "--risk-free-rate must be greater "
+            "than -1.0"
         )
 
     root = Path(
@@ -1576,6 +1600,9 @@ def main() -> None:
                 args.holding_sessions
             ),
             costs=costs,
+            annual_risk_free_rate=(
+                args.risk_free_rate
+            ),
         )
 
         strategy_root = (
@@ -1637,6 +1664,14 @@ def main() -> None:
             + "\n"
         )
 
+        captioned_metric_rows(
+            result["metrics"]
+        ).to_csv(
+            strategy_root
+            / "metrics_captioned.csv",
+            index=False,
+        )
+
         comparison_rows.append(
             metrics
         )
@@ -1660,6 +1695,60 @@ def main() -> None:
         print(
             f"Sharpe:          "
             f"{metrics['sharpe']:.3f}"
+        )
+        print(
+            "Sortino:         "
+            + (
+                "n/a"
+                if metrics[
+                    "sortino"
+                ] is None
+                else f"{metrics['sortino']:.3f}"
+            )
+        )
+        print(
+            "Calmar:          "
+            + (
+                "n/a"
+                if metrics[
+                    "calmar"
+                ] is None
+                else f"{metrics['calmar']:.3f}"
+            )
+        )
+        print(
+            "DD duration:     "
+            f"{metrics['max_drawdown_duration_sessions']:,} sessions"
+        )
+        print(
+            "Profit factor:   "
+            + (
+                "n/a"
+                if metrics[
+                    "profit_factor"
+                ] is None
+                else f"{metrics['profit_factor']:.3f}"
+            )
+        )
+        print(
+            "Expectancy:      "
+            + (
+                "n/a"
+                if metrics[
+                    "expectancy_per_trade"
+                ] is None
+                else (
+                    f"₹{metrics['expectancy_per_trade']:,.2f}/trade"
+                )
+            )
+        )
+        print(
+            "Turnover:        "
+            f"{metrics['turnover_multiple']:.2f}x initial capital"
+        )
+        print(
+            "Avg exposure:    "
+            f"{metrics['average_exposure']:.2%}"
         )
         print(
             f"Trades:          "
@@ -1693,6 +1782,15 @@ def main() -> None:
         index=False,
     )
 
+    glossary_path = (
+        reports_root
+        / "metric_glossary.csv"
+    )
+    glossary_frame().to_csv(
+        glossary_path,
+        index=False,
+    )
+
     run_summary = {
         "capital": float(
             args.capital
@@ -1712,8 +1810,14 @@ def main() -> None:
         "cost_parameters": asdict(
             costs
         ),
+        "risk_free_rate_annual": float(
+            args.risk_free_rate
+        ),
         "comparison_csv": str(
             comparison_path
+        ),
+        "metric_glossary_csv": str(
+            glossary_path
         ),
     }
 
@@ -1742,8 +1846,37 @@ def main() -> None:
         f"Comparison: {comparison_path}"
     )
     print(
+        f"Glossary:   {glossary_path}"
+    )
+    print(
         f"Run summary: {summary_path}"
     )
+
+    print(
+        "\nJargon reminder:"
+    )
+    glossary = glossary_frame()
+    for metric in (
+        "cagr",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "profit_factor",
+        "turnover_multiple",
+    ):
+        row = glossary.loc[
+            glossary[
+                "metric"
+            ].eq(metric)
+        ]
+        if row.empty:
+            continue
+        item = row.iloc[0]
+        print(
+            f"  {item['label']} — "
+            f"{item['caption']}"
+        )
 
 
 if __name__ == "__main__":
