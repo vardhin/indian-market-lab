@@ -403,9 +403,14 @@ NIFTY 50
 NIFTY 500
 ```
 
-The downloader uses the NSE historical-index report endpoint, caches each
-request window under `data/raw/index_benchmarks/`, validates OHLC integrity
-and writes normalized price-index history to:
+The downloader uses the NSE historical-index report endpoint and defaults to
+60-calendar-day request windows. NSE can silently cap oversized historical
+requests (observed as exactly 70 rows from year-long windows), so the ingest
+now rejects suspicious capped responses, incomplete weekday coverage and data
+that stops materially before the requested end date. Each request window is
+cached under `data/raw/index_benchmarks/`.
+
+It validates OHLC integrity and writes normalized price-index history to:
 
 ```text
 data/processed/index_benchmarks/
