@@ -706,6 +706,113 @@ uv run python src/ml/portfolio_diagnostics.py \
 
 Capped-row runs are diagnostic only and should not be used as paper results.
 
+
+## Quant performance dashboard and jargon glossary
+
+Backtests now use a shared metrics layer in:
+
+```text
+src/backtest/quant_metrics.py
+```
+
+Every strategy run inherits a richer performance dashboard including, where
+the required data exists:
+
+```text
+total return
+CAGR
+annualized arithmetic return
+annualized volatility
+Sharpe
+Sortino
+maximum drawdown
+drawdown duration
+high-water mark
+Calmar
+recovery factor
+95% historical VaR
+95% CVaR / expected shortfall
+skewness
+excess kurtosis
+best/worst day
+positive-day rate
+win rate
+average win/loss
+payoff ratio
+expectancy
+profit factor
+average trade return
+transaction costs
+turnover and annualized turnover
+average/max exposure
+```
+
+Benchmark reports additionally compute aligned NIFTY-relative statistics:
+
+```text
+benchmark return/CAGR
+excess CAGR
+beta
+CAPM alpha
+tracking error
+information ratio
+benchmark correlation
+```
+
+ML reports retain ranking diagnostics such as Rank IC, ICIR, top-tail/top-K
+returns and decile analysis. Rolling risk output includes rolling Sharpe and
+drawdown series.
+
+Each baseline strategy directory now writes:
+
+```text
+metrics.json
+metrics_captioned.csv
+trades.csv
+equity_curve.csv
+```
+
+`metrics_captioned.csv` stores the machine metric name, readable label,
+formatted value, one-line explanation, category and implementation status.
+
+The complete jargon glossary can be printed without running any backtest:
+
+```bash
+uv run python src/backtest/show_glossary.py
+```
+
+or filtered:
+
+```bash
+uv run python src/backtest/show_glossary.py --category benchmark
+uv run python src/backtest/show_glossary.py --category ml
+uv run python src/backtest/show_glossary.py --category research_design
+```
+
+The glossary explicitly distinguishes `computed`, `diagnostic/report`,
+`concept` and `not_yet_modeled` items. For example, MAE/MFE, separate
+bid-ask-spread modeling, market impact and capacity are not assigned invented
+numbers until the data/simulator supports them.
+
+Sharpe and Sortino keep a zero annual risk-free rate by default for backward
+comparability with earlier experiments. Baseline runs can override it:
+
+```bash
+uv run python src/backtest/baselines.py --risk-free-rate 0.065
+```
+
+where `0.065` means 6.5% annualized.
+
+The benchmark report also writes:
+
+```text
+reports/benchmarks/
+├── benchmark_relative_metrics.csv
+├── rolling_risk_metrics.csv
+├── metric_glossary.csv
+└── captioned_metrics_long.csv
+```
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
