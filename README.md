@@ -250,6 +250,92 @@ reports/
 └── research_universe_by_year.csv
 ```
 
+
+## Deterministic baseline backtests
+
+The first strategy suite is deliberately simple and auditable:
+
+```text
+momentum_5d
+momentum_20d
+momentum_60d
+mean_reversion_5d
+risk_adjusted_momentum_20d
+```
+
+Run the synthetic execution/cost sanity test first:
+
+```bash
+uv run python src/backtest/baselines.py --self-test
+```
+
+Then run the default INR 50,000 baseline suite:
+
+```bash
+uv run python src/backtest/baselines.py
+```
+
+Default execution convention:
+
+```text
+signal: after close(t)
+entry:  next NSE session open
+exit:   close(t + 5 market sessions)
+portfolio: top 5, equal slot budgets, integer initial share quantities
+cohorts: non-overlapping
+```
+
+The default cost profile is a constant 2026 delivery-equity friction model:
+
+- STT: 0.1% on delivery buy and 0.1% on delivery sell
+- stamp duty: 0.015% on the buy side
+- SEBI turnover fee: INR 10/crore each side
+- NSE cash-market outflow: INR 307/crore each side
+- GST: 18% on brokerage + exchange + SEBI service charges
+- brokerage assumption: INR 15 per executed order, configurable
+- slippage assumption: 5 bps per side, configurable
+- DP charge: configurable, default zero because it is broker-specific
+
+This is intentionally a constant-current-cost experiment, not a historical
+claim about transaction levies in 2010-2025. It answers whether historical
+signals survive a current friction model. A point-in-time historical fee
+schedule can be added as a later robustness test.
+
+Examples:
+
+```bash
+# Gross strategy signal baseline
+uv run python src/backtest/baselines.py --zero-costs
+
+# 10-stock portfolio, 20-session holding period
+uv run python src/backtest/baselines.py --top-k 10 --holding-sessions 20
+
+# Broker-specific assumptions
+uv run python src/backtest/baselines.py \
+  --brokerage-per-order 0 \
+  --dp-charge-per-sell 15.34 \
+  --slippage-bps 5
+```
+
+Mapped split/bonus events update the share quantity of an already-held
+position before trading on the ex-date. If a selected historical trade's
+forward outcome crosses an unresolved mechanical event, that selected slot is
+left in cash for data-quality reasons and is not replaced by a lower-ranked
+security. This is reported separately rather than hidden.
+
+Outputs are written under:
+
+```text
+reports/backtests/
+├── baseline_comparison_*.csv
+├── run_summary_*.json
+└── <strategy>/
+    └── <run configuration>/
+        ├── metrics.json
+        ├── trades.csv
+        └── equity_curve.csv
+```
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
