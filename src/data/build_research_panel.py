@@ -638,6 +638,253 @@ def add_forward_targets(
     return df
 
 
+def load_unsafe_mechanical_actions(
+    root: Path,
+) -> pd.DataFrame:
+    """
+    Collect split/bonus events that are not safely represented in the adjusted
+    layer: either their factor could not be parsed, or the parsed event could
+    not be mapped to a resolved canonical security.
+    """
+    root = Path(root)
+
+    actions_path = (
+        root
+        / "data/processed/corporate_actions/"
+        "nse_corporate_actions.parquet"
+    )
+    mapping_path = (
+        root
+        / "data/processed/corporate_actions/"
+        "mechanical_action_identity_map.parquet"
+    )
+
+    frames: list[pd.DataFrame] = []
+
+    if actions_path.is_file():
+        actions = pd.read_parquet(
+            actions_path,
+            columns=[
+                "symbol",
+                "series",
+                "purpose",
+                "action_type",
+                "ex_date",
+                "auto_adjustable",
+            ],
+        )
+
+        unparsed = actions.loc[
+            actions["action_type"].isin(
+                [
+                    "bonus",
+                    "split_or_consolidation",
+                ]
+            )
+            & ~actions[
+                "auto_adjustable"
+            ].fillna(False)
+        ].copy()
+
+        if len(unparsed):
+            unparsed[
+                "unsafe_reason"
+            ] = "mechanical_factor_unparsed"
+            frames.append(unparsed)
+
+    if mapping_path.is_file():
+        mapping = pd.read_parquet(
+            mapping_path
+        )
+
+        unmapped = mapping.loc[
+            ~mapping[
+                "mapping_status"
+            ].eq("mapped")
+        ].copy()
+
+        if len(unmapped):
+            unmapped[
+                "unsafe_reason"
+            ] = (
+                "mechanical_identity_"
+                + unmapped[
+                    "mapping_status"
+                ].astype(str)
+            )
+            frames.append(
+                unmapped[
+                    [
+                        "symbol",
+                        "series",
+                        "purpose",
+                        "action_type",
+                        "ex_date",
+                        "auto_adjustable",
+                        "unsafe_reason",
+                    ]
+                ]
+            )
+
+    if not frames:
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "series",
+                "purpose",
+                "action_type",
+                "ex_date",
+                "unsafe_reason",
+            ]
+        )
+
+    unsafe = pd.concat(
+        frames,
+        ignore_index=True,
+    )
+
+    unsafe["symbol"] = (
+        unsafe["symbol"]
+        .astype("string")
+        .str.strip()
+    )
+    unsafe["series"] = (
+        unsafe["series"]
+        .astype("string")
+        .str.strip()
+    )
+    unsafe["ex_date"] = pd.to_datetime(
+        unsafe["ex_date"],
+        errors="coerce",
+    ).dt.normalize()
+
+    unsafe = (
+        unsafe.loc[
+            unsafe["symbol"].notna()
+            & unsafe["ex_date"].notna()
+        ]
+        .drop_duplicates(
+            [
+                "symbol",
+                "series",
+                "purpose",
+                "ex_date",
+                "unsafe_reason",
+            ],
+            keep="last",
+        )
+        .sort_values(
+            [
+                "ex_date",
+                "symbol",
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+    return unsafe
+
+
+def add_unsafe_action_censor(
+    df: pd.DataFrame,
+    unsafe_actions: pd.DataFrame,
+    *,
+    max_lookback: int = 60,
+    max_forward_horizon: int = 20,
+) -> pd.DataFrame:
+    """
+    Censor rows whose feature history or forward target could cross an unsafe
+    mechanical corporate action.
+
+    For an unsafe event at market session e:
+      - rows e-max_forward_horizon .. e-1 can have contaminated targets;
+      - rows e .. e+max_lookback-1 can have contaminated trailing features.
+
+    The underlying rows remain in the dataset for auditability; they are merely
+    excluded from eligible_universe.
+    """
+    df = df.copy()
+    df[
+        "unsafe_mechanical_action_window"
+    ] = False
+
+    if unsafe_actions.empty:
+        return df
+
+    trading_dates = pd.Index(
+        sorted(
+            df["date"]
+            .dropna()
+            .unique()
+        )
+    )
+
+    symbol_indices = (
+        df.groupby(
+            "symbol",
+            sort=False,
+        ).indices
+    )
+
+    for action in unsafe_actions.itertuples(
+        index=False
+    ):
+        symbol = str(action.symbol)
+        idx = symbol_indices.get(symbol)
+
+        if idx is None:
+            continue
+
+        ex_date = pd.Timestamp(
+            action.ex_date
+        ).normalize()
+
+        event_index = int(
+            trading_dates.searchsorted(
+                ex_date,
+                side="left",
+            )
+        )
+
+        if event_index >= len(
+            trading_dates
+        ):
+            continue
+
+        lower = (
+            event_index
+            - max_forward_horizon
+        )
+        upper = (
+            event_index
+            + max_lookback
+            - 1
+        )
+
+        market_index = pd.to_numeric(
+            df.loc[
+                idx,
+                "market_day_index",
+            ],
+            errors="coerce",
+        )
+
+        affected_idx = market_index.index[
+            market_index.between(
+                lower,
+                upper,
+                inclusive="both",
+            )
+        ]
+
+        df.loc[
+            affected_idx,
+            "unsafe_mechanical_action_window",
+        ] = True
+
+    return df
+
+
 def add_universe_flags(
     df: pd.DataFrame,
     *,
@@ -700,6 +947,9 @@ def add_universe_flags(
         & df["activity_eligible"]
         & df["recent_20_sessions_complete"]
         & df["has_next_session_open"]
+        & ~df[
+            "unsafe_mechanical_action_window"
+        ]
     )
 
     return df
@@ -906,6 +1156,31 @@ def build_research_panel(
     )
 
     print(
+        "Loading unsafe split/bonus events "
+        "for conservative censoring..."
+    )
+    unsafe_actions = (
+        load_unsafe_mechanical_actions(
+            root
+        )
+    )
+    print(
+        f"  unsafe mechanical events="
+        f"{len(unsafe_actions):,}"
+    )
+
+    panel = add_unsafe_action_censor(
+        panel,
+        unsafe_actions,
+        max_lookback=max(
+            RETURN_LOOKBACKS
+        ),
+        max_forward_horizon=max(
+            HORIZONS
+        ),
+    )
+
+    print(
         "Applying configurable point-in-time "
         "universe rules..."
     )
@@ -1007,6 +1282,14 @@ def build_research_panel(
         },
         "horizons": list(
             HORIZONS
+        ),
+        "unsafe_mechanical_actions": int(
+            len(unsafe_actions)
+        ),
+        "rows_censored_for_unsafe_mechanical_actions": int(
+            panel[
+                "unsafe_mechanical_action_window"
+            ].sum()
         ),
         "output_root": str(
             output_root
@@ -1144,6 +1427,9 @@ def self_test() -> None:
         df
     )
     out = add_forward_targets(out)
+    out[
+        "unsafe_mechanical_action_window"
+    ] = False
 
     # On t, the 3-day realistic target is:
     # buy at open(t+1), sell at close(t+3).
