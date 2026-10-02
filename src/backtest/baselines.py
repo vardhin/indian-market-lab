@@ -1435,6 +1435,7 @@ def self_test() -> None:
             "volatility_20d": 0.02,
             "volatility_60d": 0.03,
             "unsafe_target_window_3d": False,
+            "model_score": float(i),
         })
 
     panel = pd.DataFrame(rows)
@@ -1480,6 +1481,29 @@ def self_test() -> None:
     )
 
     trades = result["trades"]
+
+    scored_result = run_backtest(
+        panel,
+        pd.DataFrame(
+            columns=[
+                "canonical_security_id",
+                "ex_date",
+                "share_multiplier",
+            ]
+        ),
+        strategy="synthetic_model",
+        score_column="model_score",
+        initial_capital=1_000.0,
+        top_k=1,
+        holding_sessions=3,
+        costs=zero_costs,
+    )
+
+    if scored_result["trades"].empty:
+        raise AssertionError(
+            "Arbitrary score-column backtest "
+            "produced no trades."
+        )
 
     if trades.empty:
         raise AssertionError(
