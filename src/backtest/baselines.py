@@ -31,6 +31,14 @@ STRATEGIES = {
         "column": "risk_adjusted_momentum_20d",
         "direction": 1.0,
     },
+    "risk_adjusted_momentum_60d": {
+        "column": "risk_adjusted_momentum_60d",
+        "direction": 1.0,
+    },
+    "liquidity_control": {
+        "column": "turnover_median_20d",
+        "direction": 1.0,
+    },
 }
 
 
@@ -72,6 +80,7 @@ PANEL_BASE_COLUMNS = [
     "return_20d",
     "return_60d",
     "volatility_20d",
+    "volatility_60d",
 ]
 
 
@@ -165,6 +174,7 @@ def load_panel(
         "return_20d",
         "return_60d",
         "volatility_20d",
+        "volatility_60d",
     ):
         panel[col] = pd.to_numeric(
             panel[col],
@@ -209,6 +219,12 @@ def load_panel(
         panel["return_20d"]
         / panel["volatility_20d"].where(
             panel["volatility_20d"] > 0
+        )
+    )
+    panel["risk_adjusted_momentum_60d"] = (
+        panel["return_60d"]
+        / panel["volatility_60d"].where(
+            panel["volatility_60d"] > 0
         )
     )
 
@@ -1365,6 +1381,7 @@ def self_test() -> None:
             "return_20d": 0.10,
             "return_60d": 0.20,
             "volatility_20d": 0.02,
+            "volatility_60d": 0.03,
             "unsafe_target_window_3d": False,
         })
 
@@ -1374,6 +1391,12 @@ def self_test() -> None:
     ] = (
         panel["return_20d"]
         / panel["volatility_20d"]
+    )
+    panel[
+        "risk_adjusted_momentum_60d"
+    ] = (
+        panel["return_60d"]
+        / panel["volatility_60d"]
     )
 
     zero_costs = CostProfile(
