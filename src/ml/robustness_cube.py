@@ -1255,6 +1255,10 @@ def main() -> None:
             "hist_gb",
             "hist_gb_fixed",
             "random_forest",
+            "extra_trees",
+            "xgboost",
+            "lightgbm",
+            "catboost",
         ],
     )
     ap.add_argument(
@@ -1273,6 +1277,10 @@ def main() -> None:
             "hist_gb",
             "hist_gb_fixed",
             "random_forest",
+            "extra_trees",
+            "xgboost",
+            "lightgbm",
+            "catboost",
         ],
     )
     ap.add_argument(
