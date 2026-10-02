@@ -427,6 +427,10 @@ def run_persistent_backtest(
     rebalance_sessions: int,
     costs: CostProfile,
     annual_risk_free_rate: float,
+    policy_schedule: dict[
+        int,
+        dict
+    ] | None = None,
 ) -> dict:
     if hold_rank < top_k:
         raise ValueError(
@@ -829,6 +833,47 @@ def run_persistent_backtest(
         ):
             continue
 
+        if policy_schedule:
+            policy = policy_schedule.get(
+                int(
+                    current_date.year
+                ),
+                {
+                    "hold_rank": (
+                        hold_rank
+                    ),
+                    "min_score_gap": (
+                        min_score_gap
+                    ),
+                },
+            )
+            current_hold_rank = int(
+                policy[
+                    "hold_rank"
+                ]
+            )
+            current_score_gap = float(
+                policy[
+                    "min_score_gap"
+                ]
+            )
+        else:
+            current_hold_rank = int(
+                hold_rank
+            )
+            current_score_gap = float(
+                min_score_gap
+            )
+
+        if (
+            current_hold_rank
+            < top_k
+        ):
+            raise RuntimeError(
+                "Scheduled hold rank must "
+                "be >= top_k."
+            )
+
         ranked = (
             day.loc[
                 day[
@@ -901,7 +946,7 @@ def run_persistent_backtest(
                     "persistent_rank"
                 ]
             )
-            if rank <= hold_rank:
+            if rank <= current_hold_rank:
                 kept.append(
                     cid
                 )
@@ -986,7 +1031,7 @@ def run_persistent_backtest(
             )
 
             if gap + 1e-12 >= (
-                min_score_gap
+                current_score_gap
             ):
                 pending_sells[
                     incumbent
@@ -1098,6 +1143,12 @@ def run_persistent_backtest(
             ),
             "censored_cash_slots": int(
                 censored_slots
+            ),
+            "applied_hold_rank": int(
+                current_hold_rank
+            ),
+            "applied_score_gap": float(
+                current_score_gap
             ),
             "rank_replacements": int(
                 len(
@@ -1314,6 +1365,9 @@ def run_persistent_backtest(
         ),
         "min_score_gap": float(
             min_score_gap
+        ),
+        "dynamic_policy_schedule": bool(
+            policy_schedule
         ),
         "rebalance_sessions": int(
             rebalance_sessions
