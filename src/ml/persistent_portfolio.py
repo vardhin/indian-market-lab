@@ -638,7 +638,7 @@ def run_persistent_backtest(
             for order in pending_buys:
                 if order[
                     "entry_market_index"
-                ] != market_index:
+                ] > market_index:
                     still_pending.append(
                         order
                     )
@@ -648,11 +648,19 @@ def run_persistent_backtest(
                     "canonical_security_id"
                 ]
 
-                if (
-                    cid in holdings
-                    or cid not in day_lookup.index
-                ):
-                    failed_entries += 1
+                if cid in holdings:
+                    continue
+
+                if len(holdings) >= top_k:
+                    still_pending.append(
+                        order
+                    )
+                    continue
+
+                if cid not in day_lookup.index:
+                    still_pending.append(
+                        order
+                    )
                     continue
 
                 if order[
@@ -673,7 +681,9 @@ def run_persistent_backtest(
                     )
                     or quoted_open <= 0
                 ):
-                    failed_entries += 1
+                    still_pending.append(
+                        order
+                    )
                     continue
 
                 budget = min(
