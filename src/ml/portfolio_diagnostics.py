@@ -1586,19 +1586,26 @@ def final_walkforward_backtests(
             score_column,
         ) in (
             (
-                "walkforward_ml",
+                (
+                    "walkforward_ml_"
+                    f"h20_k{top_k}"
+                ),
                 "walkforward_ml_pct",
             ),
             (
                 (
                     "walkforward_ensemble_"
-                    f"a{selected_alpha:.2f}"
+                    f"a{selected_alpha:.2f}_"
+                    f"h20_k{top_k}"
                 ),
                 ensemble_column,
             ),
             (
-                "walkforward_ml_"
-                "momentum_confirmed",
+                (
+                    "walkforward_ml_"
+                    "momentum_confirmed_"
+                    f"h20_k{top_k}"
+                ),
                 confirmation_column,
             ),
         ):
@@ -2551,6 +2558,7 @@ def main() -> None:
                 for column in (
                     "name",
                     "kind",
+                    "top_k",
                     "ending_equity",
                     "cagr",
                     "max_drawdown",
