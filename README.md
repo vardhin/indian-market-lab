@@ -581,6 +581,131 @@ reports/ml/classical/
 The held-out test comparison, rather than training fit statistics, is the
 primary result.
 
+
+## ML portfolio diagnostics and walk-forward construction
+
+The first held-out classical-ML run showed positive cross-sectional information
+coefficient but negative concentrated top-k portfolio returns. The next stage
+therefore diagnoses the score distribution and portfolio-construction layer
+without tuning directly on the 2022-2026 held-out result.
+
+Run:
+
+```bash
+uv run python src/ml/portfolio_diagnostics.py --self-test
+uv run python src/ml/portfolio_diagnostics.py
+```
+
+The default model family is `hist_gb`, frozen from the prior 2019-2021
+validation model-selection experiment.
+
+### Validation-only diagnostics
+
+Using a model fit only through 2018, the 2019-2021 validation block produces:
+
+- score-decile realized-return monotonicity
+- top-tail realized returns for top 20%, 10%, 5%, 2%, 1%, top 10 names and
+  top 5 names
+- daily score-rank persistence at 1-session and 20-session lags
+- top-5/10/20/50 membership overlap and turnover proxies
+- pure-ML gross-versus-net portfolio decomposition
+
+### ML + momentum ensemble
+
+For every signal date:
+
+```text
+ensemble_score =
+    alpha * percentile(ML score)
+  + (1 - alpha) * percentile(60d momentum)
+```
+
+Default candidate weights are:
+
+```text
+alpha in {0.00, 0.25, 0.50, 0.75, 1.00}
+```
+
+`alpha=0` is pure 60-day momentum rank and `alpha=1` is pure ML rank.
+
+The ensemble weight is selected **only on 2019-2021 validation data**. The
+selection criterion is mean net Sharpe across top-5 and top-10 portfolios, with
+mean net CAGR as the tie-breaker. The selected alpha is then frozen.
+
+A separate, non-tuned confirmation construction is also evaluated: ML ranking
+among eligible securities whose 60-day return is positive.
+
+### Expanding walk-forward test
+
+The frozen model family and validation-selected ensemble weight are evaluated
+with annual expanding fits:
+
+```text
+2022 score <- train through 2021, purged 20 market sessions
+2023 score <- train through 2022, purged 20 market sessions
+2024 score <- train through 2023, purged 20 market sessions
+2025 score <- train through 2024, purged 20 market sessions
+2026 score <- train through 2025, purged 20 market sessions
+```
+
+Each fold is fit only from labels whose full 20-session target is known before
+the fold starts. The ensemble alpha is never retuned in the walk-forward
+period.
+
+The combined out-of-sample scores are run through the same INR 50,000,
+integer-share, next-open-entry, current-cost delivery simulator used by the
+deterministic baselines. The final comparison includes:
+
+```text
+walk-forward pure ML
+validation-selected ML + 60d momentum ensemble
+ML with positive-60d-momentum confirmation
+60d momentum
+liquidity control
+NIFTY 50 price index
+NIFTY 500 price index
+```
+
+Both top-5 and top-10 portfolios are reported. Pure ML and the selected
+ensemble also receive matched zero-cost/current-cost decompositions.
+
+Outputs:
+
+```text
+reports/ml/portfolio_diagnostics/
+├── validation_decile_daily.csv
+├── validation_decile_summary.csv
+├── validation_top_tail_daily.csv
+├── validation_top_tail_summary.csv
+├── validation_score_persistence_daily.csv
+├── validation_score_persistence_summary.csv
+├── validation_ensemble_search.csv
+├── validation_gross_vs_net.csv
+├── walkforward_fold_diagnostics.csv
+├── walkforward_decile_daily.csv
+├── walkforward_decile_summary.csv
+├── walkforward_top_tail_daily.csv
+├── walkforward_top_tail_summary.csv
+├── walkforward_score_persistence_daily.csv
+├── walkforward_score_persistence_summary.csv
+├── walkforward_portfolio_comparison.csv
+├── walkforward_gross_vs_net.csv
+├── walkforward_predictions.parquet
+├── diagnostics_summary.json
+└── walkforward_models/
+    └── *.joblib
+```
+
+For a computational smoke test only:
+
+```bash
+uv run python src/ml/portfolio_diagnostics.py \
+  --max-train-rows 250000 \
+  --max-walkforward-train-rows 400000
+```
+
+Capped-row runs are diagnostic only and should not be used as paper results.
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
