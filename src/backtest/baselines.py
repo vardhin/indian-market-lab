@@ -675,8 +675,29 @@ def run_backtest(
             if position is None:
                 continue
 
-            position["quantity"] *= (
-                share_multiplier
+            pre_action_quantity = float(
+                position["quantity"]
+            )
+            post_action_quantity = (
+                pre_action_quantity
+                * share_multiplier
+            )
+
+            # NSE cash equities are not fractionally tradeable. For bonus
+            # ratios that create a fractional entitlement on a small holding,
+            # conservatively discard the fractional remainder rather than
+            # allowing the simulator to sell impossible fractional shares.
+            position["quantity"] = float(
+                math.floor(
+                    post_action_quantity
+                    + 1e-12
+                )
+            )
+            position[
+                "corporate_action_fraction_discarded"
+            ] += float(
+                post_action_quantity
+                - position["quantity"]
             )
             position[
                 "corporate_action_count"
@@ -824,6 +845,7 @@ def run_backtest(
                         row["close"]
                     ),
                     "corporate_action_count": 0,
+                    "corporate_action_fraction_discarded": 0.0,
                 }
 
             pending_orders = still_pending
@@ -971,6 +993,9 @@ def run_backtest(
                 "corporate_action_count": position[
                     "corporate_action_count"
                 ],
+                "corporate_action_fraction_discarded": position[
+                    "corporate_action_fraction_discarded"
+                ],
                 "written_off": False,
             })
 
@@ -1115,6 +1140,9 @@ def run_backtest(
                 ],
                 "corporate_action_count": position[
                     "corporate_action_count"
+                ],
+                "corporate_action_fraction_discarded": position[
+                    "corporate_action_fraction_discarded"
                 ],
                 "written_off": True,
             })
