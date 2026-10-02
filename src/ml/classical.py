@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 from sklearn.ensemble import (
+    ExtraTreesRegressor,
     HistGradientBoostingRegressor,
     RandomForestRegressor,
 )
@@ -603,6 +604,114 @@ def build_model(
                     random_state
                 ),
             )
+        )
+
+    if name == "extra_trees":
+        return Pipeline([
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="median",
+                ),
+            ),
+            (
+                "model",
+                ExtraTreesRegressor(
+                    n_estimators=300,
+                    max_depth=18,
+                    min_samples_leaf=30,
+                    max_features="sqrt",
+                    n_jobs=-1,
+                    random_state=(
+                        random_state
+                    ),
+                ),
+            ),
+        ])
+
+    if name == "xgboost":
+        try:
+            from xgboost import (
+                XGBRegressor,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "xgboost is optional. Install "
+                "the tournament extras with: "
+                "uv sync --extra tournament"
+            ) from exc
+
+        return XGBRegressor(
+            objective="reg:squarederror",
+            n_estimators=600,
+            learning_rate=0.03,
+            max_depth=8,
+            min_child_weight=20,
+            subsample=0.80,
+            colsample_bytree=0.80,
+            reg_lambda=1.0,
+            reg_alpha=0.0,
+            tree_method="hist",
+            n_jobs=-1,
+            random_state=(
+                random_state
+            ),
+        )
+
+    if name == "lightgbm":
+        try:
+            from lightgbm import (
+                LGBMRegressor,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "lightgbm is optional. Install "
+                "the tournament extras with: "
+                "uv sync --extra tournament"
+            ) from exc
+
+        return LGBMRegressor(
+            objective="regression",
+            n_estimators=600,
+            learning_rate=0.03,
+            num_leaves=31,
+            max_depth=-1,
+            min_child_samples=100,
+            subsample=0.80,
+            colsample_bytree=0.80,
+            reg_lambda=1.0,
+            reg_alpha=0.0,
+            n_jobs=-1,
+            verbosity=-1,
+            random_state=(
+                random_state
+            ),
+        )
+
+    if name == "catboost":
+        try:
+            from catboost import (
+                CatBoostRegressor,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "catboost is optional. Install "
+                "the tournament extras with: "
+                "uv sync --extra tournament"
+            ) from exc
+
+        return CatBoostRegressor(
+            loss_function="RMSE",
+            iterations=600,
+            learning_rate=0.03,
+            depth=8,
+            l2_leaf_reg=3.0,
+            random_seed=(
+                random_state
+            ),
+            verbose=False,
+            allow_writing_files=False,
+            thread_count=-1,
         )
 
     if name == "random_forest":
@@ -1554,6 +1663,10 @@ def main() -> None:
             "hist_gb",
             "hist_gb_fixed",
             "random_forest",
+            "extra_trees",
+            "xgboost",
+            "lightgbm",
+            "catboost",
         ],
         default=[
             "ridge",
