@@ -1190,11 +1190,7 @@ def compute_performance_metrics(
             gross_profit
             / gross_loss
             if gross_loss > 0
-            else (
-                float("inf")
-                if gross_profit > 0
-                else None
-            )
+            else None
         )
 
         net_return = pd.to_numeric(
@@ -2021,6 +2017,14 @@ def captioned_metric_rows(
         dict[str, Any]
     ] = []
 
+    status_map = (
+        glossary_frame()
+        .set_index(
+            "metric"
+        )["status"]
+        .to_dict()
+    )
+
     for metric, value in (
         metrics.items()
     ):
@@ -2059,8 +2063,8 @@ def captioned_metric_rows(
                 )
             ),
             "status": (
-                glossary.get(
-                    "status",
+                status_map.get(
+                    metric,
                     ""
                 )
             ),
