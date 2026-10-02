@@ -107,7 +107,10 @@ def prediction_path(
         root
         / "reports/ml/nested_generalization/"
         "predictions"
-        / model_name
+        / (
+            f"{model_name}_"
+            f"rs{random_state}"
+        )
         / f"{year}.parquet"
     )
 
@@ -805,6 +808,8 @@ def build_config_surface(
     events: pd.DataFrame,
     *,
     root: Path,
+    model_name: str,
+    random_state: int,
     top_k_values: list[int],
     hold_multipliers: list[int],
     score_gaps: list[float],
@@ -828,6 +833,26 @@ def build_config_surface(
         cached = pd.read_csv(
             path
         )
+        if (
+            "partial_year"
+            in cached.columns
+        ):
+            cached[
+                "partial_year"
+            ] = (
+                cached[
+                    "partial_year"
+                ]
+                .astype(str)
+                .str.lower()
+                .map({
+                    "true": True,
+                    "false": False,
+                })
+                .fillna(False)
+                .astype(bool)
+            )
+
         expected_k = {
             int(x)
             for x in top_k_values
@@ -848,6 +873,8 @@ def build_config_surface(
             "capital" in cached.columns
             and "risk_free_rate_annual"
             in cached.columns
+            and "model_name" in cached.columns
+            and "random_state" in cached.columns
             and "oos_start_year"
             in cached.columns
             and "oos_end_year"
@@ -891,6 +918,20 @@ def build_config_surface(
                 .unique()
             }
             == expected_g
+            and cached[
+                "model_name"
+            ].eq(
+                str(
+                    model_name
+                )
+            ).all()
+            and cached[
+                "random_state"
+            ].eq(
+                int(
+                    random_state
+                )
+            ).all()
             and cached[
                 "capital"
             ].eq(
@@ -1022,6 +1063,12 @@ def build_config_surface(
                         metadata={
                             "cost_profile": (
                                 cost_name
+                            ),
+                            "model_name": str(
+                                model_name
+                            ),
+                            "random_state": int(
+                                random_state
                             ),
                             "top_k": int(
                                 top_k
@@ -2075,6 +2122,10 @@ def main() -> None:
             df,
             events,
             root=root,
+            model_name=args.model,
+            random_state=(
+                args.random_state
+            ),
             top_k_values=[
                 int(x)
                 for x in args.top_k
@@ -2112,6 +2163,10 @@ def main() -> None:
             df,
             events,
             root=root,
+            model_name=args.model,
+            random_state=(
+                args.random_state
+            ),
             top_k_values=[
                 int(x)
                 for x in args.top_k
