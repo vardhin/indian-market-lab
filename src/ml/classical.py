@@ -587,6 +587,24 @@ def build_model(
             )
         )
 
+    if name == "hist_gb_fixed":
+        # Temporal-purity robustness specification: fixed iteration budget,
+        # no random internal validation split / early stopping.
+        return (
+            HistGradientBoostingRegressor(
+                loss="squared_error",
+                learning_rate=0.05,
+                max_iter=250,
+                max_leaf_nodes=31,
+                min_samples_leaf=100,
+                l2_regularization=1.0,
+                early_stopping=False,
+                random_state=(
+                    random_state
+                ),
+            )
+        )
+
     if name == "random_forest":
         return Pipeline([
             (
@@ -1534,6 +1552,7 @@ def main() -> None:
         choices=[
             "ridge",
             "hist_gb",
+            "hist_gb_fixed",
             "random_forest",
         ],
         default=[
