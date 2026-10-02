@@ -656,12 +656,60 @@ def validate_index(
             )
         )
 
+    expected_end = min(
+        pd.Timestamp(end).normalize(),
+        pd.Timestamp.today().normalize(),
+    )
+    end_gap_days = int(
+        (
+            expected_end
+            - frame["date"].max()
+        ).days
+    )
+
+    if end_gap_days > 10:
+        raise RuntimeError(
+            f"{requested_index}: benchmark history stops at "
+            f"{frame['date'].max().date()}, which is {end_gap_days} days "
+            f"before expected end {expected_end.date()}. "
+            "This usually indicates a truncated NSE API response."
+        )
+
+    weekday_count = len(
+        pd.bdate_range(
+            max(
+                pd.Timestamp(start),
+                frame["date"].min(),
+            ),
+            expected_end,
+        )
+    )
+    weekday_coverage = (
+        len(frame) / weekday_count
+        if weekday_count
+        else 1.0
+    )
+
+    if weekday_coverage < 0.75:
+        raise RuntimeError(
+            f"{requested_index}: only {len(frame):,} rows for roughly "
+            f"{weekday_count:,} weekday sessions "
+            f"({weekday_coverage:.1%} coverage). "
+            "Benchmark history appears incomplete."
+        )
+
     return {
         "requested_index": (
             requested_index
         ),
         "rows": int(
             len(frame)
+        ),
+        "weekday_coverage": float(
+            weekday_coverage
+        ),
+        "end_gap_days": int(
+            end_gap_days
         ),
         "date_min": str(
             frame["date"]
@@ -700,7 +748,7 @@ def build_indices(
     indices: list[str],
     start: pd.Timestamp,
     end: pd.Timestamp,
-    chunk_days: int = 365,
+    chunk_days: int = 60,
     refresh: bool = False,
 ) -> dict:
     root = Path(root).resolve()
@@ -782,6 +830,26 @@ def build_indices(
                 raw_root,
                 refresh=refresh,
             )
+
+            requested_span_days = (
+                chunk_end
+                - chunk_start
+            ).days + 1
+
+            # NSE's endpoint can silently truncate large date windows rather
+            # than returning every requested trading day. The observed failure
+            # mode is exactly 70 rows from year-long requests. Never accept
+            # that shape silently.
+            if (
+                len(rows) >= 70
+                and requested_span_days > 120
+            ):
+                raise RuntimeError(
+                    "Suspiciously capped NSE index-history response: "
+                    f"{len(rows)} rows for a {requested_span_days}-day "
+                    f"window ({chunk_start.date()} -> {chunk_end.date()}). "
+                    "Use --chunk-days 60 (default) or smaller."
+                )
 
             normalized_rows.extend(
                 normalize_record(
@@ -1056,6 +1124,14 @@ def self_test() -> None:
         ),
     ]
 
+    assert len(
+        chunk_ranges(
+            pd.Timestamp("2026-01-01"),
+            pd.Timestamp("2026-12-31"),
+            days=60,
+        )
+    ) == 7
+
     print(
         "Index benchmark ingest "
         "self-test: PASS"
@@ -1092,7 +1168,7 @@ def main() -> None:
     ap.add_argument(
         "--chunk-days",
         type=int,
-        default=365,
+        default=60,
     )
     ap.add_argument(
         "--refresh",
