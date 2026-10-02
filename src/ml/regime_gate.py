@@ -571,14 +571,37 @@ def build_daily_meta(
     )
 
     # A target generated from signal date t is known only at close(t+20).
-    # Shift realized diagnostics by the forecast horizon before using them as
-    # gate features, then roll over only information that had matured.
-    matured_ic = daily[
-        "realized_ic"
-    ].shift(HORIZON)
-    matured_excess = daily[
-        "realized_top_decile_excess"
-    ].shift(HORIZON)
+    # Mature diagnostics by the exact NSE market-session index rather than by
+    # dataframe row position, so a missing daily meta row cannot move future
+    # information backward accidentally.
+    ic_by_market_index = (
+        daily.set_index(
+            "market_day_index"
+        )["realized_ic"]
+    )
+    excess_by_market_index = (
+        daily.set_index(
+            "market_day_index"
+        )[
+            "realized_top_decile_excess"
+        ]
+    )
+
+    matured_source_index = (
+        daily["market_day_index"]
+        - HORIZON
+    )
+
+    matured_ic = (
+        matured_source_index.map(
+            ic_by_market_index
+        )
+    )
+    matured_excess = (
+        matured_source_index.map(
+            excess_by_market_index
+        )
+    )
 
     for window in (
         20,
