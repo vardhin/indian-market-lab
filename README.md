@@ -200,8 +200,11 @@ entry:
 - trailing 20-observation median turnover >= INR 5,000,000
 - positive-volume ratio over the trailing 20 observations >= 90%
 - complete observation coverage across the most recent 20 NSE market sessions
-- a valid next NSE market-session open
-- no unresolved split/bonus event inside the feature/target contamination window
+- no unresolved split/bonus event inside the trailing feature-history window
+
+Future execution availability is deliberately NOT part of `eligible_universe`.
+A stock missing the next session is an execution/label outcome, not information
+known at close(t).
 
 All thresholds remain explicit CLI parameters.
 
@@ -221,11 +224,20 @@ exit:   close(t+h), h in {1,3,5,10,20}
 The builder also writes close-to-close targets for forecasting diagnostics.
 Neither target family is used in feature calculation or universe selection.
 
-Unparsed or unmapped split/bonus events are not manually guessed. Instead,
-rows whose 60-session feature history or 20-session forward target could cross
-such an event are retained but marked
-`unsafe_mechanical_action_window=True` and excluded from
-`eligible_universe`.
+Unparsed or unmapped split/bonus events are not manually guessed. Instead the
+builder separates two cases:
+
+- `unsafe_feature_window=True` for rows after an unresolved mechanical event
+  whose trailing 60-session features can be contaminated; these rows are
+  excluded from the point-in-time universe.
+- `unsafe_target_window_{h}d=True` for rows whose future h-session label
+  crosses such an event; these rows may still have been valid point-in-time
+  trading candidates, but that particular historical target is excluded from
+  supervised training.
+
+Accordingly, `eligible_universe` contains only information available through
+close(t), while `training_eligible_{h}d` may additionally depend on future
+label availability.
 
 Outputs:
 
