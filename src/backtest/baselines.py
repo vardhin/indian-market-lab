@@ -541,9 +541,26 @@ def strategy_candidates(
     strategy: str,
     *,
     top_k: int,
+    score_column: str | None = None,
+    score_direction: float = 1.0,
 ) -> pd.DataFrame:
-    spec = STRATEGIES[strategy]
-    score_col = spec["column"]
+    if score_column is None:
+        spec = STRATEGIES[strategy]
+        score_col = spec["column"]
+        direction = float(
+            spec["direction"]
+        )
+    else:
+        score_col = score_column
+        direction = float(
+            score_direction
+        )
+
+    if score_col not in day.columns:
+        raise RuntimeError(
+            f"Score column {score_col!r} is missing "
+            f"for strategy {strategy!r}."
+        )
 
     candidates = day.loc[
         day["eligible_universe"].fillna(False)
@@ -554,7 +571,7 @@ def strategy_candidates(
             candidates[score_col],
             errors="coerce",
         )
-        * float(spec["direction"])
+        * direction
     )
 
     candidates["strategy_score"] = candidates[
@@ -601,8 +618,13 @@ def run_backtest(
     top_k: int,
     holding_sessions: int,
     costs: CostProfile,
+    score_column: str | None = None,
+    score_direction: float = 1.0,
 ) -> dict:
-    if strategy not in STRATEGIES:
+    if (
+        score_column is None
+        and strategy not in STRATEGIES
+    ):
         raise ValueError(
             f"Unknown strategy: {strategy}"
         )
@@ -1040,6 +1062,8 @@ def run_backtest(
                     day,
                     strategy,
                     top_k=top_k,
+                    score_column=score_column,
+                    score_direction=score_direction,
                 )
             )
 
