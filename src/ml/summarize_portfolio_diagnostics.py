@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+
+SCRIPT_PATH = Path(__file__).resolve()
+BACKTEST_DIR = SCRIPT_PATH.parents[1] / "backtest"
+if str(BACKTEST_DIR) not in sys.path:
+    sys.path.insert(
+        0,
+        str(BACKTEST_DIR),
+    )
+
+from quant_metrics import glossary_frame
 
 
 def _pct(value: object) -> str:
@@ -417,6 +429,11 @@ def main() -> None:
                 "cagr",
                 "max_drawdown",
                 "sharpe",
+                "sortino",
+                "calmar",
+                "max_drawdown_duration_sessions",
+                "profit_factor",
+                "turnover_multiple",
                 "trades",
                 "total_fees",
             )
@@ -444,20 +461,24 @@ def main() -> None:
                 col
             ].map(_pct)
 
-    if (
-        "sharpe"
-        in q.columns
+    for ratio_col in (
+        "sharpe",
+        "sortino",
+        "calmar",
+        "profit_factor",
+        "turnover_multiple",
     ):
-        q[
-            "sharpe"
-        ] = q[
-            "sharpe"
-        ].map(
-            lambda x: _num(
-                x,
-                3,
+        if ratio_col in q.columns:
+            q[
+                ratio_col
+            ] = q[
+                ratio_col
+            ].map(
+                lambda x: _num(
+                    x,
+                    3,
+                )
             )
-        )
 
     for col in (
         "ending_equity",
@@ -473,6 +494,39 @@ def main() -> None:
             index=False
         )
     )
+
+    print(
+        "\n=== JARGON — ONE-LINE CAPTIONS ==="
+    )
+    glossary = glossary_frame()
+    for metric in (
+        "cagr",
+        "annualized_volatility",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "max_drawdown_duration_sessions",
+        "profit_factor",
+        "turnover_multiple",
+        "mean_daily_ic",
+        "icir",
+        "mean_top_decile_excess",
+        "walk_forward_testing",
+        "transaction_cost_adjusted_return",
+    ):
+        row = glossary.loc[
+            glossary[
+                "metric"
+            ].eq(metric)
+        ]
+        if row.empty:
+            continue
+        item = row.iloc[0]
+        print(
+            f"{item['label']} — "
+            f"{item['caption']}"
+        )
 
 
 if __name__ == "__main__":
