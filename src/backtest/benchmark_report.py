@@ -15,6 +15,14 @@ from baselines import (
     run_backtest,
 )
 
+from quant_metrics import (
+    benchmark_relative_metrics,
+    captioned_metric_rows,
+    compute_performance_metrics,
+    glossary_frame,
+    rolling_risk_metrics,
+)
+
 
 FROZEN_BASELINES = [
     {
@@ -56,8 +64,9 @@ def curve_metrics(
     name: str,
     kind: str,
     value_col: str = "equity",
+    annual_risk_free_rate: float = 0.0,
 ) -> dict:
-    curve = (
+    clean = (
         curve.loc[
             curve["date"].notna()
             & curve[value_col].notna()
@@ -70,160 +79,67 @@ def curve_metrics(
         .copy()
     )
 
-    if len(curve) < 2:
+    clean[value_col] = (
+        pd.to_numeric(
+            clean[value_col],
+            errors="coerce",
+        )
+    )
+    clean = clean.loc[
+        clean[value_col].gt(0)
+    ].copy()
+
+    if len(clean) < 2:
         raise RuntimeError(
             f"{name}: insufficient curve rows."
         )
 
-    values = pd.to_numeric(
-        curve[value_col],
-        errors="coerce",
+    first_value = float(
+        clean[value_col].iloc[0]
+    )
+    synthetic = clean[
+        [
+            "date",
+            value_col,
+        ]
+    ].rename(
+        columns={
+            value_col: "equity"
+        }
     )
 
-    good = (
-        values.notna()
-        & values.gt(0)
-    )
-
-    curve = curve.loc[
-        good
-    ].copy()
-    values = values.loc[
-        good
-    ]
-
-    if len(curve) < 2:
-        raise RuntimeError(
-            f"{name}: insufficient positive values."
-        )
-
-    start_value = float(
-        values.iloc[0]
-    )
-    end_value = float(
-        values.iloc[-1]
-    )
-
-    start_date = pd.Timestamp(
-        curve["date"].iloc[0]
-    )
-    end_date = pd.Timestamp(
-        curve["date"].iloc[-1]
-    )
-
-    years = max(
-        (
-            end_date
-            - start_date
-        ).days
-        / 365.25,
-        1.0 / 365.25,
-    )
-
-    total_return = (
-        end_value
-        / start_value
-        - 1.0
-    )
-    cagr = (
-        end_value
-        / start_value
-    ) ** (
-        1.0 / years
-    ) - 1.0
-
-    returns = (
-        values.pct_change()
-        .replace(
-            [
-                float("inf"),
-                float("-inf"),
-            ],
-            pd.NA,
-        )
-        .dropna()
-    )
-
-    if (
-        len(returns) >= 2
-        and float(
-            returns.std()
-        ) > 0
-    ):
-        annualized_volatility = (
-            float(
-                returns.std()
-            )
-            * math.sqrt(252.0)
-        )
-        sharpe = (
-            float(
-                returns.mean()
-            )
-            / float(
-                returns.std()
-            )
-            * math.sqrt(252.0)
-        )
-    else:
-        annualized_volatility = 0.0
-        sharpe = 0.0
-
-    running_max = (
-        values.cummax()
-    )
-    drawdown = (
-        values
-        / running_max
-        - 1.0
-    )
-    max_drawdown = float(
-        drawdown.min()
-    )
-
-    calmar = (
-        cagr
-        / abs(
-            max_drawdown
-        )
-        if max_drawdown < 0
-        else None
+    metrics = compute_performance_metrics(
+        synthetic,
+        pd.DataFrame(),
+        initial_capital=first_value,
+        annual_risk_free_rate=(
+            annual_risk_free_rate
+        ),
     )
 
     return {
         "name": name,
         "kind": kind,
         "date_start": str(
-            start_date.date()
+            pd.Timestamp(
+                clean["date"].iloc[0]
+            ).date()
         ),
         "date_end": str(
-            end_date.date()
+            pd.Timestamp(
+                clean["date"].iloc[-1]
+            ).date()
         ),
         "observations": int(
-            len(curve)
+            len(clean)
         ),
-        "start_value": start_value,
-        "end_value": end_value,
-        "total_return": float(
-            total_return
+        "start_value": float(
+            metrics["starting_capital"]
         ),
-        "cagr": float(
-            cagr
+        "end_value": float(
+            metrics["ending_equity"]
         ),
-        "annualized_volatility": float(
-            annualized_volatility
-        ),
-        "sharpe": float(
-            sharpe
-        ),
-        "max_drawdown": float(
-            max_drawdown
-        ),
-        "calmar": (
-            float(calmar)
-            if calmar is not None
-            else None
-        ),
+        **metrics,
     }
 
 
@@ -713,6 +629,19 @@ def self_test() -> None:
     assert "1y" in windows
     assert "3y" in windows
 
+    for required in (
+        "sortino",
+        "calmar",
+        "var_95",
+        "cvar_95",
+        "max_drawdown_duration_sessions",
+    ):
+        if required not in metrics:
+            raise AssertionError(
+                "Missing enriched curve metric: "
+                f"{required}"
+            )
+
     print(
         "Benchmark report "
         "self-test: PASS"
@@ -956,6 +885,9 @@ def main() -> None:
     drawdown_frames: list[
         pd.DataFrame
     ] = []
+    rolling_risk_frames: list[
+        pd.DataFrame
+    ] = []
 
     strategy_curves: dict[
         str,
@@ -1016,6 +948,9 @@ def main() -> None:
             kind="strategy",
         )
 
+        metric.update(
+            result["metrics"]
+        )
         metric.update({
             "strategy": spec[
                 "strategy"
@@ -1028,17 +963,6 @@ def main() -> None:
             "top_k": spec[
                 "top_k"
             ],
-            "trades": result[
-                "metrics"
-            ]["trades"],
-            "total_fees": result[
-                "metrics"
-            ]["total_fees"],
-            "average_exposure": (
-                result["metrics"][
-                    "average_exposure"
-                ]
-            ),
         })
 
         metrics_rows.append(
@@ -1061,6 +985,17 @@ def main() -> None:
                 curve,
                 name=spec["name"],
             )
+        )
+        rolling_risk = (
+            rolling_risk_metrics(
+                curve
+            )
+        )
+        rolling_risk[
+            "name"
+        ] = spec["name"]
+        rolling_risk_frames.append(
+            rolling_risk
         )
 
     print(
@@ -1138,6 +1073,17 @@ def main() -> None:
                 name=index_name,
             )
         )
+        rolling_risk = (
+            rolling_risk_metrics(
+                curve
+            )
+        )
+        rolling_risk[
+            "name"
+        ] = index_name
+        rolling_risk_frames.append(
+            rolling_risk
+        )
 
     cash_curve = pd.DataFrame({
         "date": sorted(
@@ -1175,6 +1121,17 @@ def main() -> None:
             cash_curve,
             name="CASH_0PCT",
         )
+    )
+    cash_rolling_risk = (
+        rolling_risk_metrics(
+            cash_curve
+        )
+    )
+    cash_rolling_risk[
+        "name"
+    ] = "CASH_0PCT"
+    rolling_risk_frames.append(
+        cash_rolling_risk
     )
 
     metrics = pd.DataFrame(
@@ -1277,6 +1234,29 @@ def main() -> None:
         index=False,
     )
 
+    rolling_risk = pd.concat(
+        rolling_risk_frames,
+        ignore_index=True,
+    )
+    rolling_risk_path = (
+        output_root
+        / "rolling_risk_metrics.csv"
+    )
+    rolling_risk.to_csv(
+        rolling_risk_path,
+        index=False,
+        date_format="%Y-%m-%d",
+    )
+
+    glossary_path = (
+        output_root
+        / "metric_glossary.csv"
+    )
+    glossary_frame().to_csv(
+        glossary_path,
+        index=False,
+    )
+
     # One aligned equity table makes plotting and later report generation easy.
     curves: list[
         pd.DataFrame
@@ -1326,6 +1306,82 @@ def main() -> None:
         date_format="%Y-%m-%d",
     )
 
+    relative_rows: list[
+        dict
+    ] = []
+
+    for strategy_name, strategy_curve in (
+        strategy_curves.items()
+    ):
+        for benchmark_name in (
+            "NIFTY 50",
+            "NIFTY 500",
+        ):
+            relative = (
+                benchmark_relative_metrics(
+                    strategy_curve,
+                    index_curves[
+                        benchmark_name
+                    ],
+                )
+            )
+            relative_rows.append({
+                "strategy": strategy_name,
+                "benchmark": benchmark_name,
+                **relative,
+            })
+
+    benchmark_relative = pd.DataFrame(
+        relative_rows
+    )
+    benchmark_relative_path = (
+        output_root
+        / "benchmark_relative_metrics.csv"
+    )
+    benchmark_relative.to_csv(
+        benchmark_relative_path,
+        index=False,
+    )
+
+    dashboard_rows: list[
+        pd.DataFrame
+    ] = []
+    for row in (
+        metrics.to_dict(
+            orient="records"
+        )
+    ):
+        name = str(
+            row.get(
+                "name",
+                ""
+            )
+        )
+        captioned = (
+            captioned_metric_rows(
+                row
+            )
+        )
+        captioned[
+            "name"
+        ] = name
+        dashboard_rows.append(
+            captioned
+        )
+
+    captioned_dashboard = pd.concat(
+        dashboard_rows,
+        ignore_index=True,
+    )
+    captioned_dashboard_path = (
+        output_root
+        / "captioned_metrics_long.csv"
+    )
+    captioned_dashboard.to_csv(
+        captioned_dashboard_path,
+        index=False,
+    )
+
     summary = {
         "benchmark_return_type": (
             "price_index"
@@ -1370,6 +1426,18 @@ def main() -> None:
             ),
             "largest_drawdowns": str(
                 drawdown_path
+            ),
+            "rolling_risk_metrics": str(
+                rolling_risk_path
+            ),
+            "benchmark_relative_metrics": str(
+                benchmark_relative_path
+            ),
+            "metric_glossary": str(
+                glossary_path
+            ),
+            "captioned_metrics": str(
+                captioned_dashboard_path
             ),
             "aligned_equity_curves": str(
                 curves_path
@@ -1458,6 +1526,41 @@ def main() -> None:
         )
     )
     print(
+        "\n=== CORE METRIC JARGON ==="
+    )
+    for metric in (
+        "cagr",
+        "annualized_volatility",
+        "sharpe",
+        "sortino",
+        "max_drawdown",
+        "calmar",
+        "max_drawdown_duration_sessions",
+        "turnover_multiple",
+        "profit_factor",
+        "expectancy_per_trade",
+        "beta",
+        "alpha_annualized",
+        "information_ratio",
+        "tracking_error",
+    ):
+        info = (
+            glossary_frame()
+            .loc[
+                lambda x: x[
+                    "metric"
+                ].eq(metric)
+            ]
+        )
+        if info.empty:
+            continue
+        item = info.iloc[0]
+        print(
+            f"{item['label']}: "
+            f"{item['caption']}"
+        )
+
+    print(
         f"\nComparison: {metrics_path}"
     )
     print(
@@ -1465,6 +1568,18 @@ def main() -> None:
     )
     print(
         f"Rolling:    {rolling_path}"
+    )
+    print(
+        f"Risk roll:  {rolling_risk_path}"
+    )
+    print(
+        f"Relative:   {benchmark_relative_path}"
+    )
+    print(
+        f"Glossary:   {glossary_path}"
+    )
+    print(
+        f"Captioned:  {captioned_dashboard_path}"
     )
     print(
         f"Drawdowns:  {drawdown_path}"
