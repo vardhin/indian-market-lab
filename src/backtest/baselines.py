@@ -9,6 +9,8 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
+from quant_metrics import compute_performance_metrics
+
 
 STRATEGIES = {
     "momentum_5d": {
@@ -1235,179 +1237,22 @@ def performance_metrics(
     trades: pd.DataFrame,
     *,
     initial_capital: float,
+    annual_risk_free_rate: float = 0.0,
 ) -> dict:
-    if equity.empty:
-        return {
-            "starting_capital": float(
-                initial_capital
-            ),
-            "ending_equity": float(
-                initial_capital
-            ),
-            "total_return": 0.0,
-            "cagr": 0.0,
-            "max_drawdown": 0.0,
-            "sharpe": 0.0,
-            "annualized_volatility": 0.0,
-            "trades": 0,
-            "win_rate": None,
-            "total_fees": 0.0,
-            "turnover": 0.0,
-            "average_exposure": 0.0,
-        }
+    """
+    Shared strategy-performance dashboard.
 
-    equity = equity.sort_values(
-        "date"
-    ).copy()
-
-    ending_equity = float(
-        equity["equity"].iloc[-1]
-    )
-    total_return = (
-        ending_equity
-        / initial_capital
-        - 1.0
-    )
-
-    start_date = pd.Timestamp(
-        equity["date"].iloc[0]
-    )
-    end_date = pd.Timestamp(
-        equity["date"].iloc[-1]
-    )
-
-    years = max(
-        (
-            end_date - start_date
-        ).days
-        / 365.25,
-        1.0 / 365.25,
-    )
-
-    if ending_equity > 0:
-        cagr = (
-            ending_equity
-            / initial_capital
-        ) ** (1.0 / years) - 1.0
-    else:
-        cagr = -1.0
-
-    running_max = (
-        equity["equity"]
-        .cummax()
-        .replace(0, pd.NA)
-    )
-    drawdown = (
-        equity["equity"]
-        / running_max
-        - 1.0
-    )
-    max_drawdown = float(
-        drawdown.min()
-    )
-
-    daily_returns = (
-        equity["equity"]
-        .pct_change()
-        .replace(
-            [
-                float("inf"),
-                float("-inf"),
-            ],
-            pd.NA,
-        )
-        .dropna()
-    )
-
-    if (
-        len(daily_returns) >= 2
-        and float(
-            daily_returns.std()
-        ) > 0
-    ):
-        annualized_volatility = (
-            float(
-                daily_returns.std()
-            )
-            * math.sqrt(252.0)
-        )
-        sharpe = (
-            float(
-                daily_returns.mean()
-            )
-            / float(
-                daily_returns.std()
-            )
-            * math.sqrt(252.0)
-        )
-    else:
-        annualized_volatility = 0.0
-        sharpe = 0.0
-
-    if trades.empty:
-        trade_count = 0
-        win_rate = None
-        total_fees = 0.0
-        turnover = 0.0
-    else:
-        trade_count = int(
-            len(trades)
-        )
-        win_rate = float(
-            trades["net_pnl"]
-            .gt(0)
-            .mean()
-        )
-        total_fees = float(
-            trades["total_fees"]
-            .sum()
-        )
-        turnover = float(
-            (
-                trades[
-                    "entry_trade_value"
-                ].fillna(0)
-                + trades[
-                    "exit_trade_value"
-                ].fillna(0)
-            ).sum()
-        )
-
-    exposure = (
-        equity[
-            "invested_market_value"
-        ]
-        / equity["equity"].where(
-            equity["equity"] > 0
-        )
-    )
-
-    return {
-        "starting_capital": float(
-            initial_capital
+    The heavy lifting lives in quant_metrics.py so deterministic strategies,
+    ML portfolios and future research reports all use the same definitions.
+    """
+    return compute_performance_metrics(
+        equity,
+        trades,
+        initial_capital=initial_capital,
+        annual_risk_free_rate=(
+            annual_risk_free_rate
         ),
-        "ending_equity": (
-            ending_equity
-        ),
-        "total_return": float(
-            total_return
-        ),
-        "cagr": float(cagr),
-        "max_drawdown": float(
-            max_drawdown
-        ),
-        "sharpe": float(sharpe),
-        "annualized_volatility": float(
-            annualized_volatility
-        ),
-        "trades": trade_count,
-        "win_rate": win_rate,
-        "total_fees": total_fees,
-        "turnover": turnover,
-        "average_exposure": float(
-            exposure.fillna(0).mean()
-        ),
-    }
+    )
 
 
 def self_test() -> None:
@@ -1538,6 +1383,23 @@ def self_test() -> None:
         ),
     )
     assert buy["cash_out"] > 100.0
+
+    metrics = result["metrics"]
+    for required_metric in (
+        "sortino",
+        "calmar",
+        "max_drawdown_duration_sessions",
+        "profit_factor",
+        "expectancy_per_trade",
+        "turnover_multiple",
+        "var_95",
+        "cvar_95",
+    ):
+        if required_metric not in metrics:
+            raise AssertionError(
+                "Missing enriched metric: "
+                f"{required_metric}"
+            )
 
     print(
         "Baseline backtester self-test: PASS"
