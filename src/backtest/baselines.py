@@ -533,7 +533,7 @@ def strategy_candidates(
         day["eligible_universe"].fillna(False)
     ].copy()
 
-    candidates["_score"] = (
+    candidates["strategy_score"] = (
         pd.to_numeric(
             candidates[score_col],
             errors="coerce",
@@ -541,7 +541,7 @@ def strategy_candidates(
         * float(spec["direction"])
     )
 
-    candidates["_score"] = candidates[
+    candidates["strategy_score"] = candidates[
         "_score"
     ].replace(
         [
@@ -552,7 +552,7 @@ def strategy_candidates(
     )
 
     candidates = candidates.loc[
-        candidates["_score"].notna()
+        candidates["strategy_score"].notna()
     ].copy()
 
     if candidates.empty:
@@ -561,7 +561,7 @@ def strategy_candidates(
     return (
         candidates.sort_values(
             [
-                "_score",
+                "strategy_score",
                 "turnover_median_20d",
                 "canonical_security_id",
             ],
@@ -1020,7 +1020,7 @@ def run_backtest(
                         row.symbol
                     ),
                     "score": float(
-                        row._score
+                        row.strategy_score
                     ),
                     "signal_date": current_date,
                     "signal_market_index": market_index,
