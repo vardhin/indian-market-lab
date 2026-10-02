@@ -1127,6 +1127,189 @@ uv run python src/ml/robustness_cube.py --sections model seed
 uv run python src/ml/robustness_cube.py --sections joint bootstrap
 ```
 
+
+## India model tournament
+
+The next research stage is a fixed-protocol model tournament. The target is not
+merely positive returns:
+
+```text
+economic target:
+    net CAGR - NIFTY 500 CAGR >= 5 percentage points
+    Sharpe > 1
+
+factor-adjusted target:
+    CAPM-like annual alpha >= 5%
+    Sharpe > 1
+```
+
+The portfolio/execution protocol is frozen across models:
+
+```text
+annual expanding walk-forward fit
+20-session label purge
+cross-sectional rank target
+buy fresh top-K
+keep incumbent while rank <= K
+gap = 0
+next-open execution
+20-session rebalance cadence
+same Indian delivery-equity cost model
+K = {5, 10, 15, 20}
+```
+
+### Tabular nonlinear tier
+
+Install:
+
+```bash
+uv sync --extra tournament
+```
+
+Run:
+
+```bash
+uv run python src/ml/model_tournament.py --self-test
+uv run python src/ml/model_tournament.py
+```
+
+Default fixed configurations:
+
+```text
+HistGradientBoosting
+HistGradientBoosting, fixed iterations / no internal early stopping
+ExtraTrees
+XGBoost
+LightGBM
+CatBoost
+```
+
+A predeclared equal-rank tree consensus is also evaluated when at least three of:
+
+```text
+HistGB-fixed
+ExtraTrees
+XGBoost
+LightGBM
+CatBoost
+```
+
+complete successfully. Ensemble weights are not tuned on the evaluation period.
+
+Outputs:
+
+```text
+reports/ml/model_tournament/
+├── leaderboard.csv
+├── annual_portfolio_metrics.csv
+├── annual_prediction_diagnostics.csv
+├── prediction_summary.csv
+├── equity_curves.parquet
+├── benchmark_reference.csv
+├── tree_consensus_score_correlation.csv
+├── failures.csv
+└── tournament_summary.json
+```
+
+### Temporal nonlinear tier
+
+Install:
+
+```bash
+uv sync --extra deep
+```
+
+Run the self-test:
+
+```bash
+uv run python src/ml/temporal_tournament.py --self-test
+```
+
+Then run one or more sequence models:
+
+```bash
+uv run python src/ml/temporal_tournament.py \
+  --models seq_mlp lstm gru tcn transformer patch_transformer itransformer nhits_style
+```
+
+Every temporal sample is a leakage-safe trailing sequence for one security.
+The default lookback is 60 market sessions, and a sequence is accepted only if
+those sessions are contiguous in the market-day index. Each annual fold fits
+only labels that have matured before that fold.
+
+The temporal implementations are supervised rank regressors:
+
+```text
+seq_mlp             flattened sequence MLP
+lstm                LSTM sequence encoder
+gru                 GRU sequence encoder
+tcn                 dilated temporal convolution encoder
+transformer         temporal-token Transformer
+patch_transformer   patch-token Transformer ranker
+itransformer        variate-token Transformer ranker
+nhits_style         N-HiTS-inspired multiresolution pooling/MLP ranker
+mamba               optional mamba_ssm selective state-space ranker
+```
+
+`nhits_style`, `patch_transformer`, and `itransformer` are adaptations to
+the project's supervised cross-sectional rank target; they are not claimed to
+be drop-in reproductions of the original multi-step forecasting tasks.
+
+Mamba is isolated because `mamba-ssm` is source/CUDA dependent:
+
+```bash
+uv sync --extra deep --extra mamba
+uv run python src/ml/temporal_tournament.py --models mamba
+```
+
+Temporal predictions are cached by model, seed, lookback, epoch count and
+training-sequence cap.
+
+### SHAP / nonlinear interaction stability
+
+SHAP is an explanation stage, not a predictive model.
+
+After choosing a tree model worth interpreting:
+
+```bash
+uv run python src/ml/explain_tournament.py --model hist_gb_fixed
+```
+
+or, for example:
+
+```bash
+uv run python src/ml/explain_tournament.py --model xgboost
+```
+
+The explanation model is refit separately for each annual fold. The report
+tracks mean absolute SHAP value, signed SHAP value, feature rank stability and,
+where TreeExplainer supports it, pairwise SHAP-interaction strength.
+
+Outputs:
+
+```text
+reports/ml/model_tournament/explanations/<model>/
+├── annual_feature_shap.csv
+├── feature_stability.csv
+├── annual_interactions.csv
+├── interaction_stability.csv
+└── explanation_summary.json
+```
+
+The intended progression is:
+
+```text
+tabular nonlinear tournament
+        ↓
+temporal nonlinear tournament
+        ↓
+predeclared rank ensembles
+        ↓
+SHAP / interaction stability on credible models
+        ↓
+only then architecture/hyperparameter refinement
+```
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
