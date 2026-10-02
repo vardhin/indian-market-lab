@@ -1319,6 +1319,22 @@ def main() -> None:
         "--bootstrap-block",
         type=int,
         default=20,
+        help=(
+            "Single moving-block length retained for "
+            "backward compatibility."
+        ),
+    )
+    ap.add_argument(
+        "--bootstrap-block-values",
+        nargs="+",
+        type=int,
+        default=None,
+        help=(
+            "Optional list of moving-block lengths. "
+            "When provided, all are evaluated in one "
+            "loaded process and override "
+            "--bootstrap-block."
+        ),
     )
     ap.add_argument(
         "--bootstrap-seed",
@@ -1967,6 +1983,9 @@ def main() -> None:
 
     bootstrap_ci = pd.DataFrame()
     family_test: dict = {}
+    family_tests: list[
+        dict
+    ] = []
 
     if "bootstrap" in args.sections:
         strategy_curves = {
@@ -1992,33 +2011,120 @@ def main() -> None:
             date_format="%Y-%m-%d",
         )
 
-        (
-            bootstrap_ci,
-            family_test,
-        ) = bootstrap_family(
-            aligned,
-            top_k_values=[
-                int(k)
-                for k in args.top_k
-            ],
-            reps=(
-                args.bootstrap_reps
-            ),
-            block_length=(
-                args.bootstrap_block
-            ),
-            seed=(
+        block_values = (
+            [
+                int(x)
+                for x in (
+                    args.bootstrap_block_values
+                )
+            ]
+            if args.bootstrap_block_values
+            else [
+                int(
+                    args.bootstrap_block
+                )
+            ]
+        )
+        block_values = list(
+            dict.fromkeys(
+                block_values
+            )
+        )
+
+        if any(
+            value < 1
+            for value in block_values
+        ):
+            raise SystemExit(
+                "Bootstrap block lengths must be >= 1."
+            )
+
+        ci_frames: list[
+            pd.DataFrame
+        ] = []
+
+        for block_length in (
+            block_values
+        ):
+            print(
+                "\nRunning moving-block bootstrap "
+                f"with block={block_length} sessions "
+                f"and reps={args.bootstrap_reps}..."
+            )
+
+            (
+                ci_one,
+                test_one,
+            ) = bootstrap_family(
+                aligned,
+                top_k_values=[
+                    int(k)
+                    for k in args.top_k
+                ],
+                reps=(
+                    args.bootstrap_reps
+                ),
+                block_length=(
+                    block_length
+                ),
+                seed=(
+                    args.bootstrap_seed
+                    + int(
+                        block_length
+                    )
+                ),
+                annual_risk_free_rate=(
+                    args.risk_free_rate
+                ),
+            )
+            ci_one[
+                "bootstrap_seed"
+            ] = (
                 args.bootstrap_seed
-            ),
-            annual_risk_free_rate=(
-                args.risk_free_rate
-            ),
+                + int(
+                    block_length
+                )
+            )
+            ci_frames.append(
+                ci_one
+            )
+
+            test_one[
+                "bootstrap_seed"
+            ] = (
+                args.bootstrap_seed
+                + int(
+                    block_length
+                )
+            )
+            family_tests.append(
+                test_one
+            )
+
+        bootstrap_ci = pd.concat(
+            ci_frames,
+            ignore_index=True,
         )
         bootstrap_ci.to_csv(
             output_root
             / "bootstrap_confidence_intervals.csv",
             index=False,
         )
+
+        family_test = {
+            "tests_by_block_length": (
+                family_tests
+            ),
+            "scope_limitation": (
+                "Each test controls selection across "
+                "K=5/10/15/20 within this frozen "
+                "persistence family only; none "
+                "corrects for every strategy "
+                "experiment examined during the "
+                "project."
+            ),
+        }
+
         (
             output_root
             / "familywise_block_bootstrap_test.json"
@@ -2299,10 +2405,16 @@ def main() -> None:
         )
 
         print(
-            "\nFamilywise K-selection "
-            "block-bootstrap p-value: "
-            f"{family_test['familywise_p_value']:.4f}"
+            "\n=== FAMILYWISE K-SELECTION "
+            "BLOCK-BOOTSTRAP TESTS ==="
         )
+        for test in family_tests:
+            print(
+                "block="
+                f"{test['block_length_sessions']:>3d} "
+                "sessions  p="
+                f"{test['familywise_p_value']:.4f}"
+            )
         print(
             family_test[
                 "scope_limitation"
