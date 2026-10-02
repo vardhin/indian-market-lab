@@ -336,6 +336,55 @@ reports/backtests/
         └── equity_curve.csv
 ```
 
+
+### Robustness grid
+
+After the single-run baselines, sweep a compact deterministic surface without
+changing the data or inventing extra features:
+
+```bash
+uv run python src/backtest/grid.py
+```
+
+Default grid:
+
+```text
+strategies:
+  momentum_20d
+  momentum_60d
+  risk_adjusted_momentum_20d
+  risk_adjusted_momentum_60d
+  liquidity_control
+
+holding horizons: 5, 10, 20 market sessions
+portfolio breadth: top 3, 5, 10
+cost profile: current 2026 delivery-equity model
+```
+
+The `liquidity_control` is intentionally dumb: it simply owns the most liquid
+eligible names by trailing 20-day median turnover. It helps show whether a
+momentum rule is adding anything beyond repeatedly selecting large/liquid
+stocks.
+
+To produce matched gross-vs-net results in the same sweep:
+
+```bash
+uv run python src/backtest/grid.py --cost-profiles current zero
+```
+
+Outputs:
+
+```text
+reports/backtests/grid/
+├── grid_*.csv
+├── grid_*_net_cagr_percent.csv
+├── grid_*_gross_vs_net.csv       # when both cost profiles are requested
+└── grid_*.json
+```
+
+The grid also reports Calmar, turnover multiples, fees, failed entries, delayed
+exits and data-quality exclusions for each configuration.
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
