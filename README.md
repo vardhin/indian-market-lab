@@ -813,6 +813,138 @@ reports/benchmarks/
 └── captioned_metrics_long.csv
 ```
 
+
+## Nested generalization-first persistence experiment
+
+The single-year 2021 persistence search is useful diagnostically, but its very
+large validation returns do not establish generalization. The primary
+persistence experiment therefore uses annual out-of-sample model predictions
+and nested policy selection across multiple market years and multiple portfolio
+breadths.
+
+Run:
+
+```bash
+uv run python src/ml/nested_generalization.py --self-test
+uv run python src/ml/nested_generalization.py
+```
+
+### Annual base-model OOS folds
+
+By default the HistGradientBoosting ranker produces one genuinely annual OOS
+score set for every year from 2016 through 2026:
+
+```text
+2016 scores <- train through 2015, with 20-session label purge
+2017 scores <- train through 2016, with 20-session label purge
+...
+2026 scores <- train through 2025, with 20-session label purge
+```
+
+Predictions are cached by model family, random seed and year so interrupted or
+follow-up analyses do not need to refit unchanged annual folds.
+
+### Coarse persistence surface
+
+The portfolio-construction search is intentionally small:
+
+```text
+top-K                 = {5, 10, 15, 20}
+hold-band multiplier  = {1x, 2x, 3x}
+score-gap hurdle      = {0.00, 0.05, 0.10}
+```
+
+Both current-cost and zero-cost surfaces are generated. Each fixed rule is run
+continuously over the complete OOS score history and then decomposed into
+calendar-year performance. This avoids isolated one-year backtests whose forced
+year-end resets could distort turnover or holding persistence.
+
+### Universal nested rule
+
+For evaluation year Y, only complete OOS years strictly before Y are eligible
+for persistence-rule selection. The selector aggregates each
+`hold_multiplier + score_gap` rule across **all four K values and all prior
+years together**.
+
+The robust ordering is:
+
+```text
+1. higher 25th-percentile annual Sharpe
+2. higher median annual Sharpe
+3. higher fraction of positive-CAGR observations
+4. higher 25th-percentile annual CAGR
+5. higher median annual CAGR
+6. lower median turnover
+```
+
+This deliberately favors rules that remain acceptable in weaker years and at
+different portfolio breadths rather than whichever rule produced the single
+largest historical CAGR.
+
+The first default evaluation year is 2019, so its policy can use only the
+2016-2018 OOS history. The selected universal rule is updated annually using
+only prior complete OOS years.
+
+### Controls
+
+The executable 2019-2026 nested evaluation compares:
+
+```text
+nested_dynamic
+    universal rule re-selected annually from prior OOS years only
+
+frozen_pre_eval
+    one universal rule selected from pre-2019 OOS years and never changed
+
+buffer_only
+    hold an incumbent only while it remains inside the fresh top-K
+
+cohort_ml
+    frozen 20-session liquidate-and-rebuild ML portfolio
+
+momentum_60d
+    deterministic medium-term momentum control
+
+NIFTY 50 / NIFTY 500
+    official NSE price-index benchmarks
+```
+
+Active strategies are reported both gross and net of the current delivery-cost
+model. The final output therefore separates model/portfolio quality from
+friction sensitivity.
+
+### Outputs
+
+```text
+reports/ml/nested_generalization/
+├── annual_base_model_diagnostics.csv
+├── annual_config_surface_net.csv
+├── annual_config_surface_gross.csv
+├── nested_policy_by_year.csv
+├── nested_policy_candidate_scores.csv
+├── policy_stability.csv
+├── final_generalization_comparison.csv
+├── annual_generalization_metrics.csv
+├── aggregate_generalization.csv
+├── gross_net_decomposition.csv
+├── final_generalization_captioned.csv
+├── nested_generalization_summary.json
+└── predictions/
+    └── <model>_rs<seed>/
+        ├── 2016.parquet
+        ├── ...
+        └── 2026.parquet
+```
+
+`aggregate_generalization.csv` excludes partial calendar years and reports
+the median and lower-quartile CAGR/Sharpe, positive-year fractions, worst
+drawdown and median turnover. This is the main robustness table; terminal CAGR
+alone is not treated as sufficient evidence of generalization.
+
+The 2022-2026 interval has already been inspected during development, so this
+is correctly described as nested walk-forward generalization analysis rather
+than a pristine never-seen final holdout.
+
 ## Research roadmap
 
 1. Audit unresolved identity episodes.
