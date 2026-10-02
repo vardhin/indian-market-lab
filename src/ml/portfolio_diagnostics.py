@@ -776,6 +776,7 @@ def validation_masks(
 ) -> tuple[
     pd.Series,
     pd.Series,
+    pd.Series,
 ]:
     train_cutoff_index = int(
         df.loc[
@@ -1529,6 +1530,7 @@ def final_walkforward_backtests(
     df: pd.DataFrame,
     events: pd.DataFrame,
     *,
+    root: Path,
     score_mask: pd.Series,
     selected_alpha: float,
     top_k_values: list[int],
@@ -1649,7 +1651,7 @@ def final_walkforward_backtests(
 
     index_rows, _ = (
         add_index_benchmarks(
-            Path.cwd(),
+            root,
             test_panel_dates=set(
                 panel[
                     "date"
