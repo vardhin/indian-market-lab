@@ -542,7 +542,7 @@ def strategy_candidates(
     )
 
     candidates["strategy_score"] = candidates[
-        "_score"
+        "strategy_score"
     ].replace(
         [
             float("inf"),
