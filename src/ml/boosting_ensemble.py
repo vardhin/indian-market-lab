@@ -275,7 +275,14 @@ def score_correlation_summary(
             })
 
     daily = pd.DataFrame(
-        daily_rows
+        daily_rows,
+        columns=[
+            "date",
+            "model_a",
+            "model_b",
+            "spearman_rank_corr",
+            "rows",
+        ],
     )
 
     summary_rows: list[
@@ -324,11 +331,22 @@ def score_correlation_summary(
             ),
         })
 
+    summary = pd.DataFrame(
+        summary_rows,
+        columns=[
+            "model_a",
+            "model_b",
+            "dates",
+            "mean_spearman",
+            "median_spearman",
+            "q25_spearman",
+            "q75_spearman",
+        ],
+    )
+
     return (
         daily,
-        pd.DataFrame(
-            summary_rows
-        ),
+        summary,
     )
 
 
@@ -869,72 +887,113 @@ def annual_winners(
 
 
 def self_test() -> None:
-    fake = pd.DataFrame({
-        "date": pd.to_datetime([
-            "2020-01-01",
-            "2020-01-01",
-            "2020-01-02",
-            "2020-01-02",
-        ]),
-        "canonical_security_id": [
-            "a",
-            "b",
-            "a",
-            "b",
-        ],
-        "turnover_median_20d": [
-            1.0,
-            2.0,
-            1.0,
-            2.0,
-        ],
-    })
+    securities = [
+        f"s{i:02d}"
+        for i in range(12)
+    ]
+    dates = pd.to_datetime([
+        "2020-01-01",
+        "2020-01-02",
+    ])
+
+    rows = []
+    for date in dates:
+        for i, security in enumerate(
+            securities
+        ):
+            rows.append({
+                "date": date,
+                "canonical_security_id": (
+                    security
+                ),
+                "turnover_median_20d": float(
+                    i + 1
+                ),
+            })
+
+    fake = pd.DataFrame(
+        rows
+    )
     mask = pd.Series(
-        [True] * 4
+        [True] * len(
+            fake
+        )
+    )
+
+    base = np.tile(
+        np.arange(
+            12,
+            dtype=float,
+        ),
+        2,
     )
     store = {
-        "xgboost": np.array([
-            0.1,
-            0.9,
-            0.2,
-            0.8,
-        ]),
-        "lightgbm": np.array([
-            0.2,
-            0.8,
-            0.1,
-            0.9,
-        ]),
-        "catboost": np.array([
-            0.3,
-            0.7,
-            0.4,
-            0.6,
-        ]),
+        "xgboost": (
+            base.copy()
+        ),
+        "lightgbm": (
+            base[::-1].copy()
+        ),
+        "catboost": (
+            np.roll(
+                base,
+                2,
+            )
+        ),
     }
+
     ranks = daily_rank_frame(
         fake,
         eval_mask=mask,
         score_store=store,
     )
-    _, corr = (
+    daily_corr, corr = (
         score_correlation_summary(
             ranks,
             models=BASE_MODELS,
         )
     )
-    assert len(corr) == 3
+    assert len(
+        daily_corr
+    ) == 6
+    assert len(
+        corr
+    ) == 3
 
     _, overlap = (
         topk_overlap_summary(
             ranks,
             models=BASE_MODELS,
             top_k_values=[
-                1,
+                5,
             ],
         )
     )
     assert not overlap.empty
+
+    tiny = ranks.groupby(
+        "date",
+        sort=False,
+    ).head(2)
+    empty_daily, empty_summary = (
+        score_correlation_summary(
+            tiny,
+            models=BASE_MODELS,
+        )
+    )
+    assert empty_daily.empty
+    assert empty_summary.empty
+    assert list(
+        empty_summary.columns
+    ) == [
+        "model_a",
+        "model_b",
+        "dates",
+        "mean_spearman",
+        "median_spearman",
+        "q25_spearman",
+        "q75_spearman",
+    ]
 
     print(
         "Boosting ensemble self-test: PASS"
