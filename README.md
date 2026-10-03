@@ -1265,6 +1265,72 @@ uv run python src/ml/temporal_tournament.py --models mamba
 Temporal predictions are cached by model, seed, lookback, epoch count and
 training-sequence cap.
 
+
+### Boosting complementarity and selective ensemble
+
+After the architecture tournament, the strongest observed tabular families can be
+studied without refitting them. This experiment is intentionally cache-first and
+focuses on XGBoost, LightGBM, and CatBoost.
+
+It measures:
+
+```text
+daily cross-sectional Spearman rank correlation
+top-K overlap and Jaccard overlap
+standalone portfolio-return correlation
+coincident 10% / 20% drawdown periods
+annual winners by K
+```
+
+It then evaluates only predeclared equal-rank signals:
+
+```text
+XGBoost
+LightGBM
+CatBoost
+XGBoost + LightGBM
+XGBoost + CatBoost
+LightGBM + CatBoost
+XGBoost + LightGBM + CatBoost
+```
+
+No ensemble weights are fitted. Each ensemble is the equal-weight mean of the
+members' within-date percentile ranks, and every signal is evaluated at the same
+K = {5, 10, 15, 20} with the frozen persistent execution/backtest protocol.
+
+Run:
+
+```bash
+uv run python src/ml/boosting_ensemble.py --self-test
+uv run python src/ml/boosting_ensemble.py
+```
+
+By default the script refuses to refit missing annual prediction caches. Use
+`--allow-fit` only when CPU refitting is intentional.
+
+Outputs:
+
+```text
+reports/ml/boosting_ensemble/
+├── leaderboard.csv
+├── annual_metrics.csv
+├── annual_prediction_diagnostics.csv
+├── daily_score_correlations.csv
+├── score_correlation_summary.csv
+├── daily_topk_overlap.csv
+├── topk_overlap_summary.csv
+├── portfolio_pair_diagnostics.csv
+├── portfolio_return_correlation.csv
+├── annual_winners_by_k.csv
+├── equity_curves.parquet
+├── benchmark_reference.csv
+└── summary.json
+```
+
+This stage is exploratory because the choice to focus on these three boosting
+models was informed by previously observed OOS tournament results. Any promising
+ensemble must later be validated with nested selection or an independent test.
+
 ### SHAP / nonlinear interaction stability
 
 SHAP is an explanation stage, not a predictive model.
