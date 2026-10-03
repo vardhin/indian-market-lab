@@ -15,6 +15,9 @@ from classical import (
     TRAIN_START,
     cross_sectional_diagnostics,
 )
+from persistent_portfolio import (
+    add_daily_ranks,
+)
 
 
 @dataclass
