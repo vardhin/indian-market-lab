@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -641,6 +642,19 @@ def build_model(
                 "uv sync --extra tournament"
             ) from exc
 
+        accelerator = (
+            os.environ.get(
+                "MARKETLAB_ACCELERATOR",
+                "cpu",
+            )
+            .strip()
+            .lower()
+        )
+        use_cuda = accelerator in {
+            "cuda",
+            "gpu",
+        }
+
         return XGBRegressor(
             objective="reg:squarederror",
             n_estimators=600,
@@ -652,6 +666,11 @@ def build_model(
             reg_lambda=1.0,
             reg_alpha=0.0,
             tree_method="hist",
+            device=(
+                "cuda"
+                if use_cuda
+                else "cpu"
+            ),
             n_jobs=-1,
             random_state=(
                 random_state
@@ -700,18 +719,40 @@ def build_model(
                 "uv sync --extra tournament"
             ) from exc
 
-        return CatBoostRegressor(
-            loss_function="RMSE",
-            iterations=600,
-            learning_rate=0.03,
-            depth=8,
-            l2_leaf_reg=3.0,
-            random_seed=(
+        accelerator = (
+            os.environ.get(
+                "MARKETLAB_ACCELERATOR",
+                "cpu",
+            )
+            .strip()
+            .lower()
+        )
+        use_cuda = accelerator in {
+            "cuda",
+            "gpu",
+        }
+
+        kwargs = {
+            "loss_function": "RMSE",
+            "iterations": 600,
+            "learning_rate": 0.03,
+            "depth": 8,
+            "l2_leaf_reg": 3.0,
+            "random_seed": (
                 random_state
             ),
-            verbose=False,
-            allow_writing_files=False,
-            thread_count=-1,
+            "verbose": False,
+            "allow_writing_files": False,
+            "thread_count": -1,
+        }
+        if use_cuda:
+            kwargs.update({
+                "task_type": "GPU",
+                "devices": "0",
+            })
+
+        return CatBoostRegressor(
+            **kwargs
         )
 
     if name == "random_forest":
