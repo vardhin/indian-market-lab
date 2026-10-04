@@ -873,23 +873,15 @@ def build_teacher(
             ]
         ).normalize()
 
-        # Never let a development episode use next-stage calendar data
-        # merely to create its hindsight label.
-        if (
-            stage
-            == "development"
-            and int(
-                signal_date.year
-            )
-            == max(
-                DEVELOPMENT_YEARS
-            )
-            and int(
-                forced_exit_date.year
-            )
-            > max(
-                DEVELOPMENT_YEARS
-            )
+        # Keep every episode inside one calendar year. This prevents a
+        # December episode from placing late-2022 state rows in controller
+        # training while its continuation labels or later states extend into
+        # the 2023 validation year. It also keeps confirmation-year reports
+        # cleanly attributable.
+        if int(
+            signal_date.year
+        ) != int(
+            forced_exit_date.year
         ):
             skipped_boundary += 1
             continue
@@ -1571,6 +1563,89 @@ def build_teacher(
         index=False,
     )
 
+    episode_rows = []
+    for episode_id, group in teacher.groupby(
+        "episode_id",
+        sort=False,
+    ):
+        ordered = group.sort_values(
+            "state_market_index",
+            kind="stable",
+        )
+        first = ordered.iloc[
+            0
+        ]
+        last = ordered.iloc[
+            -1
+        ]
+        forced_return = float(
+            last[
+                "exit_next_open_net_return"
+            ]
+        )
+        oracle_return = float(
+            first[
+                "oracle_best_net_return"
+            ]
+        )
+        episode_rows.append({
+            "episode_id": (
+                episode_id
+            ),
+            "signal_date": (
+                first[
+                    "signal_date"
+                ]
+            ),
+            "symbol": str(
+                first[
+                    "symbol"
+                ]
+            ),
+            "canonical_security_id": str(
+                first[
+                    "canonical_security_id"
+                ]
+            ),
+            "forced_20d_net_return": (
+                forced_return
+            ),
+            "oracle_best_net_return": (
+                oracle_return
+            ),
+            "oracle_exit_timing_gain": (
+                oracle_return
+                - forced_return
+            ),
+        })
+
+    episode_summary = pd.DataFrame(
+        episode_rows
+    )
+    episode_summary.to_csv(
+        reports_root
+        / "teacher_episode_summary.csv",
+        index=False,
+    )
+
+    mean_exit_timing_gain = float(
+        episode_summary[
+            "oracle_exit_timing_gain"
+        ].mean()
+    )
+    median_exit_timing_gain = float(
+        episode_summary[
+            "oracle_exit_timing_gain"
+        ].median()
+    )
+    positive_exit_timing_gain_fraction = float(
+        episode_summary[
+            "oracle_exit_timing_gain"
+        ].gt(
+            0
+        ).mean()
+    )
+
     summary = {
         "stage": stage,
         "years": years,
@@ -1619,6 +1694,17 @@ def build_teacher(
                 "oracle_advantage_return"
             ].mean()
         ),
+        "oracle_exit_timing_headroom": {
+            "mean_gain_vs_forced_20d": (
+                mean_exit_timing_gain
+            ),
+            "median_gain_vs_forced_20d": (
+                median_exit_timing_gain
+            ),
+            "positive_gain_fraction": (
+                positive_exit_timing_gain_fraction
+            ),
+        },
         "skipped": {
             "boundary": int(
                 skipped_boundary
@@ -2344,6 +2430,17 @@ def main() -> None:
         print(
             "Oracle HOLD: "
             f"{summary['oracle_hold_fraction']:.2%}"
+        )
+        headroom = summary[
+            "oracle_exit_timing_headroom"
+        ]
+        print(
+            "Mean exit-timing headroom: "
+            f"{float(headroom['mean_gain_vs_forced_20d']):+.2%}"
+        )
+        print(
+            "Positive headroom episodes: "
+            f"{float(headroom['positive_gain_fraction']):.2%}"
         )
         print(
             f"Output:      {summary['teacher_path']}"
