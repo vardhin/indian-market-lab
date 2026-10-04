@@ -1390,3 +1390,156 @@ only then architecture/hyperparameter refinement
 9. Test uncertainty-aware selective trading.
 10. Compare deterministic allocation with offline RL.
 11. Replicate key findings across additional markets.
+
+
+## Leakage-audited feature engineering reset
+
+The next research phase treats the old model tournament as a baseline, not as a
+finished predictor. The information boundary is frozen as:
+
+```text
+observe all information through close(t)
+        ↓
+score / select after close(t)
+        ↓
+earliest execution = open(t+1)
+```
+
+No feature may depend on `open(t+1)`, future corporate actions, future index
+membership, future sector labels, or a present-day security snapshot copied
+backward through history.
+
+The feature registry is in:
+
+```text
+src/features/feature_registry.py
+```
+
+The predeclared feature families are:
+
+```text
+F0   frozen baseline features
+F1   OHLC geometry
+F2   streak / discrete price state
+F3   stock-specific historical tendencies
+F4   broad-market context
+F5   point-in-time large-cap / market-cap context
+F6   market→stock lead-lag and response residuals
+F8   same-close cross-sectional ranks
+F9   recurring calendar / seasonality
+F10  liquidity and volatility state
+```
+
+Absolute calendar year is kept for attribution and diagnostics, not as a default
+model feature.
+
+### Build the enriched panel
+
+NIFTY 100 is now included in the default historical-index download. Rebuild the
+index panel first if the local copy predates that change:
+
+```bash
+uv run python src/data/index_benchmarks.py
+```
+
+Run the feature leakage self-test:
+
+```bash
+uv run python src/features/build_enriched_panel.py --self-test
+```
+
+Then build the enriched daily panel:
+
+```bash
+uv run python src/features/build_enriched_panel.py --overwrite
+```
+
+Outputs include:
+
+```text
+data/processed/research_panel_enriched/
+reports/features/feature_registry.json
+reports/features/enriched_panel_metadata.json
+```
+
+### Point-in-time large-cap context
+
+The current 2026 security master must not be used to label historical rows as
+large-cap, sector or industry members. Historical context is ingested only from
+dated snapshots.
+
+Place dated constituent/context snapshots under:
+
+```text
+data/reference/security_context_snapshots/
+```
+
+Each file must contain an `asof_date` column or a YYYY-MM-DD date in the
+filename, plus either `canonical_security_id` or ISIN. Optional metadata
+includes sector, industry, sector index and market capitalization.
+
+Build the context table with:
+
+```bash
+uv run python src/features/build_security_context.py
+```
+
+The importer explicitly writes false membership rows when a security disappears
+from a later large-cap snapshot, so old membership cannot silently persist.
+
+After context is available, rebuild the enriched panel.
+
+### Feature-family ablation protocol
+
+Development is intentionally separated from the later evaluation block.
+
+```text
+development OOS: 2019–2023
+evaluation OOS:  2024–2026
+```
+
+Development runs cumulative, predeclared feature sets only:
+
+```bash
+uv run python src/ml/feature_ablation.py \
+  --stage development \
+  --universe largecap \
+  --models xgboost
+```
+
+The evaluation stage refuses to run an unspecified feature search. Freeze one
+development feature set first, then evaluate exactly that set:
+
+```bash
+uv run python src/ml/feature_ablation.py \
+  --stage evaluation \
+  --universe largecap \
+  --feature-set 'F0+F1+F2+F3+F4+F6' \
+  --models xgboost
+```
+
+Do not repeatedly alter the feature set after inspecting the evaluation block
+without declaring a new research cycle.
+
+### Strategy attribution
+
+`src/ml/strategy_attribution.py` rebuilds the actual persistent portfolio from
+saved annual prediction caches and writes:
+
+```text
+top-K signal ledger
+actual trade ledger
+rebalance ledger
+equity curve
+P&L by stock
+P&L by sector
+P&L by industry
+P&L by year
+P&L by month
+P&L by weekday
+```
+
+This separates model explainability from economic attribution: SHAP can explain
+why a model produced a score, while the attribution ledger explains where the
+portfolio actually made or lost money.
+
