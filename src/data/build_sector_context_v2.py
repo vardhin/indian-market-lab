@@ -390,7 +390,7 @@ def load_sector_returns(
     )
 
 
-def load_nifty50_returns(
+def load_broad_market_returns(
     root: Path,
 ) -> pd.DataFrame:
     path = (
@@ -410,63 +410,109 @@ def load_nifty50_returns(
         path
     )
 
-    frame = frame.loc[
-        frame[
-            "requested_index"
-        ].eq(
-            "NIFTY 50"
-        ),
-        [
-            "date",
-            "close",
-        ],
-    ].copy()
+    parts = []
 
-    frame[
-        "date"
-    ] = pd.to_datetime(
-        frame[
-            "date"
-        ],
-        errors="coerce",
-    ).dt.normalize()
+    for index_name, prefix in (
+        ("NIFTY 50", "nifty50"),
+        ("NIFTY 500", "nifty500"),
+    ):
+        part = frame.loc[
+            frame[
+                "requested_index"
+            ].eq(
+                index_name
+            ),
+            [
+                "date",
+                "close",
+            ],
+        ].copy()
 
-    frame = (
-        frame.dropna()
-        .sort_values(
+        if part.empty:
+            raise RuntimeError(
+                f"Broad index dataset lacks "
+                f"{index_name}."
+            )
+
+        part[
             "date"
+        ] = pd.to_datetime(
+            part[
+                "date"
+            ],
+            errors="coerce",
+        ).dt.normalize()
+
+        part = (
+            part.dropna()
+            .sort_values(
+                "date"
+            )
+            .drop_duplicates(
+                "date",
+                keep="last",
+            )
+            .reset_index(
+                drop=True
+            )
         )
-        .drop_duplicates(
-            "date",
-            keep="last",
+
+        for horizon in (
+            RETURN_HORIZONS
+        ):
+            part[
+                f"{prefix}_return_{horizon}d"
+            ] = (
+                part[
+                    "close"
+                ]
+                / part[
+                    "close"
+                ].shift(
+                    horizon
+                )
+                - 1.0
+            )
+
+        part = part.drop(
+            columns=[
+                "close"
+            ]
         )
-        .reset_index(
-            drop=True
+
+        parts.append(
+            part
         )
+
+    broad = parts[
+        0
+    ].merge(
+        parts[
+            1
+        ],
+        on="date",
+        how="outer",
+        validate="one_to_one",
     )
 
     for horizon in (
         RETURN_HORIZONS
     ):
-        frame[
-            f"nifty50_return_{horizon}d"
-        ] = (
-            frame[
-                "close"
-            ]
-            / frame[
-                "close"
-            ].shift(
-                horizon
+        broad[
+            (
+                "nifty50_minus_nifty500_"
+                f"{horizon}d"
             )
-            - 1.0
+        ] = (
+            broad[
+                f"nifty50_return_{horizon}d"
+            ]
+            - broad[
+                f"nifty500_return_{horizon}d"
+            ]
         )
 
-    return frame.drop(
-        columns=[
-            "close"
-        ]
-    )
+    return broad
 
 
 def rolling_corr_beta(
@@ -707,6 +753,10 @@ def compute_security_context(
         | (
             best_value
             == -np.inf
+        )
+        | (
+            best_value
+            <= 0
         )
     )
 
@@ -1055,7 +1105,7 @@ def build_sector_context(
         )
     )
 
-    nifty = load_nifty50_returns(
+    broad = load_broad_market_returns(
         root
     )
 
@@ -1066,7 +1116,7 @@ def build_sector_context(
         validate="many_to_one",
     )
     history = history.merge(
-        nifty,
+        broad,
         on="date",
         how="left",
         validate="many_to_one",
@@ -1138,6 +1188,72 @@ def build_sector_context(
         ),
     )
 
+    output[
+        "amfi_largecap_rank_pct"
+    ] = (
+        (
+            pd.to_numeric(
+                output[
+                    "amfi_market_cap_rank"
+                ],
+                errors="coerce",
+            )
+            - 1.0
+        )
+        / 99.0
+    )
+
+    output[
+        "log_amfi_average_market_cap_cr"
+    ] = np.log1p(
+        pd.to_numeric(
+            output[
+                "amfi_average_market_cap_cr"
+            ],
+            errors="coerce",
+        ).where(
+            pd.to_numeric(
+                output[
+                    "amfi_average_market_cap_cr"
+                ],
+                errors="coerce",
+            )
+            >= 0
+        )
+    )
+
+    daily_median_cap = (
+        output.groupby(
+            "date",
+            sort=False,
+        )[
+            "amfi_average_market_cap_cr"
+        ].transform(
+            "median"
+        )
+    )
+
+    output[
+        "amfi_mcap_vs_largecap_median"
+    ] = np.log(
+        pd.to_numeric(
+            output[
+                "amfi_average_market_cap_cr"
+            ],
+            errors="coerce",
+        )
+        / pd.to_numeric(
+            daily_median_cap,
+            errors="coerce",
+        ).where(
+            pd.to_numeric(
+                daily_median_cap,
+                errors="coerce",
+            )
+            > 0
+        )
+    )
+
     base_keep = [
         "date",
         "market_day_index",
@@ -1145,6 +1261,9 @@ def build_sector_context(
         "symbol",
         "amfi_market_cap_rank",
         "amfi_average_market_cap_cr",
+        "amfi_largecap_rank_pct",
+        "log_amfi_average_market_cap_cr",
+        "amfi_mcap_vs_largecap_median",
         "sector_proxy_name",
         "sector_proxy_corr_120d",
         "sector_proxy_corr_252d",
@@ -1184,6 +1303,16 @@ def build_sector_context(
             (
                 "sector_leads_stock_corr_"
                 f"lag{lag}_120d"
+            )
+        )
+
+    for horizon in (
+        RETURN_HORIZONS
+    ):
+        feature_keep.append(
+            (
+                "nifty50_minus_nifty500_"
+                f"{horizon}d"
             )
         )
 
@@ -1301,6 +1430,9 @@ def build_sector_context(
             "symbol",
             "amfi_market_cap_rank",
             "amfi_average_market_cap_cr",
+            "amfi_largecap_rank_pct",
+            "log_amfi_average_market_cap_cr",
+            "amfi_mcap_vs_largecap_median",
             "sector_proxy_name",
         }
     ]
