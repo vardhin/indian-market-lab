@@ -32,6 +32,22 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# AMFI's archive page has historically exposed a couple of workbook
+# anchors inconsistently to non-browser clients.  Keep the exact
+# official workbook URLs as discovery fallbacks so a missing half-year
+# can never silently stretch the previous PIT classification forward.
+KNOWN_OFFICIAL_WORKBOOKS = {
+    pd.Timestamp("2020-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Average%20Market%20Capitalization%20of%20Listed%20Companies%20"
+        "during%20Jul%20-%20Dec%202020_Final.xlsx"
+    ),
+    pd.Timestamp("2024-06-30"): (
+        "https://www.amfiindia.com/uploads/"
+        "Average_Market_Capitalization_30_Jun2024_2a1ab4c1d8.xlsx"
+    ),
+}
+
 ISIN_RE = re.compile(
     r"^[A-Z]{2}[A-Z0-9]{10}$"
 )
@@ -236,6 +252,111 @@ def discover_excel_urls(
             urls
         )
     )
+
+
+def expected_period_ends(
+    first: pd.Timestamp,
+    last: pd.Timestamp,
+) -> list[pd.Timestamp]:
+    first = pd.Timestamp(
+        first
+    ).normalize()
+    last = pd.Timestamp(
+        last
+    ).normalize()
+
+    if first.month not in {
+        6,
+        12,
+    }:
+        raise ValueError(
+            "first must be a June/December "
+            "half-year endpoint"
+        )
+
+    if last.month not in {
+        6,
+        12,
+    }:
+        raise ValueError(
+            "last must be a June/December "
+            "half-year endpoint"
+        )
+
+    out: list[pd.Timestamp] = []
+    cursor = first
+
+    while cursor <= last:
+        out.append(
+            cursor
+        )
+
+        if cursor.month == 6:
+            cursor = pd.Timestamp(
+                year=cursor.year,
+                month=12,
+                day=31,
+            )
+        else:
+            cursor = pd.Timestamp(
+                year=cursor.year + 1,
+                month=6,
+                day=30,
+            )
+
+    return out
+
+
+def validate_period_completeness(
+    sources: list[dict],
+) -> None:
+    if not sources:
+        raise RuntimeError(
+            "No AMFI sources discovered."
+        )
+
+    discovered = sorted({
+        pd.Timestamp(
+            row[
+                "period_end"
+            ]
+        ).normalize()
+        for row in sources
+    })
+
+    first = min(
+        discovered
+    )
+    last = max(
+        discovered
+    )
+
+    expected = set(
+        expected_period_ends(
+            first,
+            last,
+        )
+    )
+    actual = set(
+        discovered
+    )
+
+    missing = sorted(
+        expected
+        - actual
+    )
+
+    if missing:
+        raise RuntimeError(
+            "AMFI half-year archive is "
+            "incomplete. Missing period ends: "
+            + ", ".join(
+                str(
+                    value.date()
+                )
+                for value in missing
+            )
+        )
 
 
 def infer_period_end(
@@ -1029,12 +1150,27 @@ def build_archive(
         sources = manifest[
             "sources"
         ]
+        validate_period_completeness(
+            sources
+        )
     else:
         print(
             "Discovering AMFI historical "
             "market-cap workbooks..."
         )
         urls = discover_excel_urls()
+
+        # Add exact official AMFI fallbacks for historical anchors
+        # that have been observed to disappear from simple HTTP
+        # discovery even though they remain listed on the archive page.
+        urls.extend(
+            KNOWN_OFFICIAL_WORKBOOKS.values()
+        )
+        urls = list(
+            dict.fromkeys(
+                urls
+            )
+        )
 
         if not urls:
             raise RuntimeError(
@@ -1070,6 +1206,37 @@ def build_archive(
                 ),
             })
 
+        # If discovery omitted a known official historical workbook,
+        # inject it by its authoritative period endpoint.
+        existing_periods = {
+            pd.Timestamp(
+                row[
+                    "period_end"
+                ]
+            ).normalize()
+            for row in sources
+        }
+
+        for (
+            period_end,
+            url,
+        ) in (
+            KNOWN_OFFICIAL_WORKBOOKS.items()
+        ):
+            if period_end in existing_periods:
+                continue
+
+            sources.append({
+                "url": url,
+                "period_end": str(
+                    period_end.date()
+                ),
+                "cache_file": cache_name(
+                    url,
+                    period_end,
+                ),
+            })
+
         sources = sorted(
             sources,
             key=lambda row: (
@@ -1077,6 +1244,10 @@ def build_archive(
                     "period_end"
                 ]
             ),
+        )
+
+        validate_period_completeness(
+            sources
         )
 
         manifest = {
@@ -1421,6 +1592,24 @@ def self_test() -> None:
     ) == pd.Timestamp(
         "2025-02-01"
     )
+    expected = expected_period_ends(
+        pd.Timestamp(
+            "2017-12-31"
+        ),
+        pd.Timestamp(
+            "2026-06-30"
+        ),
+    )
+    assert len(
+        expected
+    ) == 18
+    assert pd.Timestamp(
+        "2020-12-31"
+    ) in expected
+    assert pd.Timestamp(
+        "2024-06-30"
+    ) in expected
+
     assert _normalise_category(
         "Large Cap"
     ) == "large_cap"
