@@ -789,14 +789,23 @@ def fit_model(
     model,
     df: pd.DataFrame,
     mask: pd.Series,
+    *,
+    feature_columns: list[str] | None = None,
+    target_column: str = "target_rank_20d",
 ):
+    columns = (
+        FEATURE_COLUMNS
+        if feature_columns is None
+        else list(feature_columns)
+    )
+
     X = df.loc[
         mask,
-        FEATURE_COLUMNS,
+        columns,
     ]
     y = df.loc[
         mask,
-        "target_rank_20d",
+        target_column,
     ].astype("float32")
 
     model.fit(
@@ -811,6 +820,8 @@ def predict_mask(
     model,
     df: pd.DataFrame,
     mask: pd.Series,
+    *,
+    feature_columns: list[str] | None = None,
 ) -> np.ndarray:
     if int(
         mask.sum()
@@ -820,11 +831,17 @@ def predict_mask(
             dtype=float,
         )
 
+    columns = (
+        FEATURE_COLUMNS
+        if feature_columns is None
+        else list(feature_columns)
+    )
+
     return np.asarray(
         model.predict(
             df.loc[
                 mask,
-                FEATURE_COLUMNS,
+                columns,
             ]
         ),
         dtype=float,
