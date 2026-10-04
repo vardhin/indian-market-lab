@@ -431,6 +431,7 @@ def run_persistent_backtest(
         int,
         dict
     ] | None = None,
+    rebalance_anchor_market_index: int | None = None,
 ) -> dict:
     if hold_rank < top_k:
         raise ValueError(
@@ -471,11 +472,32 @@ def run_persistent_backtest(
 
     first_index = market_indices[0]
     last_index = market_indices[-1]
-    signal_indices = set(
-        market_indices[
-            ::rebalance_sessions
-        ]
-    )
+
+    if rebalance_anchor_market_index is None:
+        signal_indices = set(
+            market_indices[
+                ::rebalance_sessions
+            ]
+        )
+    else:
+        anchor = int(
+            rebalance_anchor_market_index
+        )
+        signal_indices = {
+            int(
+                market_index
+            )
+            for market_index
+            in market_indices
+            if (
+                int(
+                    market_index
+                )
+                - anchor
+            )
+            % rebalance_sessions
+            == 0
+        }
 
     cash = float(
         initial_capital
@@ -1378,6 +1400,14 @@ def run_persistent_backtest(
         ),
         "rebalance_sessions": int(
             rebalance_sessions
+        ),
+        "rebalance_anchor_market_index": (
+            None
+            if rebalance_anchor_market_index
+            is None
+            else int(
+                rebalance_anchor_market_index
+            )
         ),
         "retained_decisions": int(
             retained_decisions
