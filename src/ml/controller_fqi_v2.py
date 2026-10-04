@@ -828,7 +828,7 @@ def evaluate_fqi(
 
 
 def self_test() -> None:
-    sample = pd.DataFrame({
+    base = pd.DataFrame({
         "episode_id": (
             ["a"] * 3
             + ["b"] * 3
@@ -841,19 +841,36 @@ def self_test() -> None:
             2,
             3,
         ],
+        "state_date": pd.to_datetime([
+            "2023-01-02",
+            "2023-01-03",
+            "2023-01-04",
+            "2023-02-01",
+            "2023-02-02",
+            "2023-02-03",
+        ]),
     })
 
-    for feature in (
-        CONTROLLER_FEATURES
-    ):
-        sample[
-            feature
-        ] = np.arange(
-            len(
-                sample
-            ),
-            dtype=float,
-        )
+    feature_values = pd.DataFrame(
+        {
+            feature: np.arange(
+                len(
+                    base
+                ),
+                dtype=float,
+            )
+            for feature
+            in CONTROLLER_FEATURES
+        }
+    )
+
+    sample = pd.concat(
+        [
+            base,
+            feature_values,
+        ],
+        axis=1,
+    )
 
     transitions = (
         prepare_transitions(
