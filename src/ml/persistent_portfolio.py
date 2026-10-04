@@ -508,6 +508,7 @@ def run_persistent_backtest(
     replacements = 0
     skipped_gap_replacements = 0
     failed_entries = 0
+    expired_pending_buys = 0
 
     unsafe_col = (
         "unsafe_target_window_20d"
@@ -640,12 +641,24 @@ def run_persistent_backtest(
             ] = []
 
             for order in pending_buys:
-                if order[
-                    "entry_market_index"
-                ] > market_index:
+                intended_index = int(
+                    order[
+                        "entry_market_index"
+                    ]
+                )
+
+                if intended_index > market_index:
                     still_pending.append(
                         order
                     )
+                    continue
+
+                # Buy signals are next-open orders, not good-till-cancelled
+                # orders. If the intended execution session has already
+                # passed, discard the stale signal rather than entering on a
+                # later unrelated open.
+                if intended_index < market_index:
+                    expired_pending_buys += 1
                     continue
 
                 cid = order[
@@ -656,15 +669,11 @@ def run_persistent_backtest(
                     continue
 
                 if len(holdings) >= top_k:
-                    still_pending.append(
-                        order
-                    )
+                    expired_pending_buys += 1
                     continue
 
                 if cid not in day_lookup.index:
-                    still_pending.append(
-                        order
-                    )
+                    expired_pending_buys += 1
                     continue
 
                 if order[
@@ -685,9 +694,7 @@ def run_persistent_backtest(
                     )
                     or quoted_open <= 0
                 ):
-                    still_pending.append(
-                        order
-                    )
+                    expired_pending_buys += 1
                     continue
 
                 budget = min(
@@ -1386,6 +1393,9 @@ def run_persistent_backtest(
         ),
         "failed_entries": int(
             failed_entries
+        ),
+        "expired_pending_buys": int(
+            expired_pending_buys
         ),
         "applied_corporate_actions": int(
             applied_actions
