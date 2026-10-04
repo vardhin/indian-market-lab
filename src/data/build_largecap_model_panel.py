@@ -15,6 +15,7 @@ RESEARCH_REQUIRED = [
     "market_day_index",
     "canonical_security_id",
     "symbol",
+    "eligible_universe",
     "open",
     "close",
     "turnover",
@@ -444,9 +445,23 @@ def build_panel(
                 validate="one_to_one",
             )
 
+        # Preserve the frozen close(t)-knowable research-universe
+        # eligibility. PIT large-cap membership is an additional universe
+        # restriction, not a replacement for liquidity/history/completeness
+        # filters from the research panel.
         frame[
             "eligible_universe"
-        ] = True
+        ] = (
+            frame[
+                "eligible_universe"
+            ]
+            .fillna(
+                False
+            )
+            .astype(
+                bool
+            )
+        )
 
         frame[
             "training_eligible_20d"
@@ -471,6 +486,9 @@ def build_panel(
 
         safe_target = (
             frame[
+                "eligible_universe"
+            ]
+            & frame[
                 "training_eligible_20d"
             ]
             & target.notna()
@@ -504,6 +522,12 @@ def build_panel(
         # panel.  Preserve that as broad-market breadth context, but
         # explicitly add ranks within today's PIT large-cap universe so
         # the two meanings are not conflated.
+        largecap_rank_mask = (
+            frame[
+                "eligible_universe"
+            ]
+        )
+
         for source in (
             "return_5d",
             "return_20d",
@@ -516,10 +540,15 @@ def build_panel(
             )
             frame[
                 output_name
+            ] = np.nan
+            frame.loc[
+                largecap_rank_mask,
+                output_name,
             ] = (
                 pd.to_numeric(
-                    frame[
-                        source
+                    frame.loc[
+                        largecap_rank_mask,
+                        source,
                     ],
                     errors="coerce",
                 )
@@ -609,6 +638,11 @@ def build_panel(
                     frame
                 )
             ),
+            "eligible_rows": int(
+                frame[
+                    "eligible_universe"
+                ].sum()
+            ),
             "training_rows": int(
                 safe_target.sum()
             ),
@@ -632,6 +666,11 @@ def build_panel(
                 len(
                     frame
                 )
+            ),
+            "eligible_rows": int(
+                frame[
+                    "eligible_universe"
+                ].sum()
             ),
             "training_rows": int(
                 safe_target.sum()
@@ -671,6 +710,10 @@ def build_panel(
         .agg(
             rows=(
                 "rows",
+                "sum",
+            ),
+            eligible_rows=(
+                "eligible_rows",
                 "sum",
             ),
             training_rows=(
