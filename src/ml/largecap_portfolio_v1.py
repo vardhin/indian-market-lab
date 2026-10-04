@@ -342,11 +342,18 @@ def attach_scores(
     stage: str,
     years: list[int],
 ) -> dict:
+    prediction_stage = (
+        "branch"
+        if stage
+        == "development"
+        else "confirmation"
+    )
+
     base = (
         root
         / "reports/ml/"
         "largecap_feature_ablation"
-        / stage
+        / prediction_stage
         / "predictions"
         / FEATURE_SET
     )
@@ -372,7 +379,8 @@ def attach_scores(
         if not path.is_file():
             raise FileNotFoundError(
                 "Missing frozen B4 prediction "
-                f"cache: {path}"
+                f"cache from {prediction_stage} "
+                f"stage: {path}"
             )
 
         saved = pd.read_parquet(
@@ -488,6 +496,9 @@ def attach_scores(
     )
 
     return {
+        "prediction_stage": (
+            prediction_stage
+        ),
         "expected_rows": int(
             expected_rows
         ),
