@@ -33,7 +33,10 @@ htmlcov/
 /data/processed/
 
 # Generated validation reports
-/reports/data_quality*.json
+/reports/
+
+# Local dependency lockfile
+/uv.lock
 
 # Local credentials and environment configuration
 .env
