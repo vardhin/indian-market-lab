@@ -798,6 +798,7 @@ def run_experiment(
                 annual_risk_free_rate=(
                     risk_free_rate
                 ),
+                rebalance_anchor_market_index=0,
             )
         )
 
