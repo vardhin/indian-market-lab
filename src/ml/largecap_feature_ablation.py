@@ -359,6 +359,59 @@ ABLATION_ORDER = [
     ),
 ]
 
+BRANCH_BASE_FAMILIES = [
+    "F0_baseline",
+    "F1_ohlc",
+    "F2_streak",
+    "F3_tendency",
+    "F4_market",
+    "F5a_sector_dynamics",
+]
+
+BRANCH_ORDER = [
+    (
+        "B0_A5_core",
+        list(
+            BRANCH_BASE_FAMILIES
+        ),
+    ),
+    (
+        "B1_core_plus_F5b",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F5b_sector_identity",
+        ],
+    ),
+    (
+        "B2_core_plus_F6",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F6_lead_lag",
+        ],
+    ),
+    (
+        "B3_core_plus_F7",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F7_size",
+        ],
+    ),
+    (
+        "B4_core_plus_F8",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F8_cross_section",
+        ],
+    ),
+    (
+        "B5_core_plus_F9",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F9_calendar",
+        ],
+    ),
+]
+
 DEVELOPMENT_YEARS = [
     2021,
     2022,
@@ -954,15 +1007,23 @@ def experiment_sets(
     if stage == "development":
         return ABLATION_ORDER
 
+    if stage == "branch":
+        return BRANCH_ORDER
+
     if selected is None:
         raise ValueError(
             "--feature-set is required "
             "for confirmation stage."
         )
 
-    mapping = dict(
-        ABLATION_ORDER
-    )
+    mapping = {
+        **dict(
+            ABLATION_ORDER
+        ),
+        **dict(
+            BRANCH_ORDER
+        ),
+    }
 
     if selected not in mapping:
         raise ValueError(
@@ -1005,7 +1066,10 @@ def run(
     years = (
         DEVELOPMENT_YEARS
         if stage
-        == "development"
+        in {
+            "development",
+            "branch",
+        }
         else CONFIRMATION_YEARS
     )
 
@@ -1071,11 +1135,13 @@ def run(
             in experiments
         },
         "development_rule": (
-            "Feature-family comparisons are "
-            "restricted to 2021-2023 annual "
-            "walk-forward OOS. Confirmation "
-            "mode accepts one frozen feature "
-            "set for 2024-2026."
+            "Cumulative and branch feature-family "
+            "comparisons are restricted to 2021-2023 "
+            "annual walk-forward OOS. Branch mode "
+            "holds the A5 sector-dynamics core fixed "
+            "and adds exactly one remaining family. "
+            "Confirmation mode accepts one frozen "
+            "feature set for 2024-2026."
         ),
         "portfolio_search": False,
     }
@@ -1397,6 +1463,13 @@ def run(
     # Preserve the declared ablation order rather than sorting by the
     # observed metric: this is a feature-family experiment, not a
     # leaderboard-driven feature search.
+    order_source = (
+        BRANCH_ORDER
+        if stage
+        == "branch"
+        else ABLATION_ORDER
+    )
+
     declared_order = {
         name: i
         for i, (
@@ -1404,7 +1477,7 @@ def run(
             _,
         )
         in enumerate(
-            ABLATION_ORDER
+            order_source
         )
     }
 
@@ -1557,6 +1630,53 @@ def self_test() -> None:
 
         prior = current
 
+    branch_names = [
+        name
+        for name, _
+        in BRANCH_ORDER
+    ]
+    assert len(
+        branch_names
+    ) == len(
+        set(
+            branch_names
+        )
+    )
+
+    core = set(
+        feature_columns(
+            BRANCH_BASE_FAMILIES
+        )
+    )
+
+    assert set(
+        feature_columns(
+            BRANCH_ORDER[
+                0
+            ][
+                1
+            ]
+        )
+    ) == core
+
+    for _name, families in (
+        BRANCH_ORDER[
+            1:
+        ]
+    ):
+        current = set(
+            feature_columns(
+                families
+            )
+        )
+        assert core.issubset(
+            current
+        )
+        assert len(
+            current
+            - core
+        ) > 0
+
     # Exact duplicates identified by the F5 audit must not be in the
     # predictive feature manifest.
     full = set(
@@ -1604,6 +1724,7 @@ def main() -> None:
         "--stage",
         choices=[
             "development",
+            "branch",
             "confirmation",
         ],
         default="development",
@@ -1613,7 +1734,7 @@ def main() -> None:
         default=None,
         help=(
             "Required in confirmation mode. "
-            "Example: A7_plus_F6"
+            "Example: B4_core_plus_F8"
         ),
     )
     ap.add_argument(
