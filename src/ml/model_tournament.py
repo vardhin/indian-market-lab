@@ -534,10 +534,10 @@ def build_consensus(
         if name in score_store
     ]
 
-    if len(available) < 3:
+    if len(available) < 2:
         raise RuntimeError(
-            "Tree consensus requires at "
-            "least three available models."
+            "Rank consensus requires at "
+            "least two available models."
         )
 
     view = pd.DataFrame({
