@@ -76,14 +76,28 @@ POLICIES = [
         "threshold": 0.0,
     },
     {
+        "name": "rf_0025",
+        "threshold": 0.0025,
+    },
+    {
+        "name": "rf_005",
+        "threshold": 0.005,
+    },
+    {
         "name": "rf_010",
         "threshold": 0.01,
+    },
+    {
+        "name": "rf_020",
+        "threshold": 0.02,
     },
 ]
 
 
 def load_fqi_models(
     root: Path,
+    *,
+    iterations: int,
 ):
     teacher_path = (
         root
@@ -136,7 +150,9 @@ def load_fqi_models(
     ) = fitted_q_iteration(
         train,
         model_name=MODEL_NAME,
-        iterations=FQI_ITERATIONS,
+        iterations=int(
+            iterations
+        ),
         random_state=RANDOM_STATE,
     )
 
@@ -1422,6 +1438,15 @@ def main() -> None:
         default=50_000.0,
     )
     ap.add_argument(
+        "--fqi-iterations",
+        type=int,
+        default=FQI_ITERATIONS,
+        help=(
+            "Bellman fitted-Q iterations. Keep fixed when comparing "
+            "portfolio policies."
+        ),
+    )
+    ap.add_argument(
         "--risk-free-rate",
         type=float,
         default=0.065,
@@ -1478,7 +1503,10 @@ def main() -> None:
         hold_model,
         iteration_diag,
     ) = load_fqi_models(
-        root
+        root,
+        iterations=int(
+            args.fqi_iterations
+        ),
     )
 
     costs = CostProfile(
@@ -1813,8 +1841,8 @@ def main() -> None:
         "controller_validation_year": (
             VALIDATION_YEAR
         ),
-        "fqi_iterations": (
-            FQI_ITERATIONS
+        "fqi_iterations": int(
+            args.fqi_iterations
         ),
         "policies": (
             POLICIES
