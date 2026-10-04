@@ -1970,6 +1970,286 @@ def evaluate_controller(
     }
 
 
+CONTINUATION_THRESHOLDS = [
+    0.0,
+    0.005,
+    0.01,
+    0.02,
+    0.03,
+    0.04,
+    0.05,
+]
+
+
+def evaluate_sequential_policy(
+    frame: pd.DataFrame,
+    predictions: np.ndarray,
+    *,
+    threshold: float,
+) -> tuple[
+    dict,
+    pd.DataFrame,
+]:
+    work = frame.copy()
+    work[
+        "predicted_advantage"
+    ] = np.asarray(
+        predictions,
+        dtype=float,
+    )
+
+    episode_rows = []
+
+    for episode_id, group in work.groupby(
+        "episode_id",
+        sort=False,
+    ):
+        ordered = (
+            group.sort_values(
+                "state_market_index",
+                kind="stable",
+            )
+            .reset_index(
+                drop=True
+            )
+        )
+
+        if ordered.empty:
+            continue
+
+        # The learned policy is applied recursively. HOLD means advance to the
+        # next state and ask the learned controller again. The first state at
+        # which predicted continuation advantage fails to clear the hurdle
+        # causes an EXIT at the following open. If no such state occurs, the
+        # episode exits at its terminal permitted open.
+        exit_candidates = ordered.loc[
+            ordered[
+                "predicted_advantage"
+            ].le(
+                float(
+                    threshold
+                )
+            )
+        ]
+
+        if exit_candidates.empty:
+            chosen = ordered.iloc[
+                -1
+            ]
+            forced_terminal = True
+        else:
+            chosen = exit_candidates.iloc[
+                0
+            ]
+            forced_terminal = False
+
+        first = ordered.iloc[
+            0
+        ]
+        last = ordered.iloc[
+            -1
+        ]
+
+        model_return = float(
+            chosen[
+                "exit_next_open_net_return"
+            ]
+        )
+        forced_return = float(
+            last[
+                "exit_next_open_net_return"
+            ]
+        )
+        oracle_return = float(
+            first[
+                "oracle_best_net_return"
+            ]
+        )
+
+        episode_rows.append({
+            "episode_id": (
+                episode_id
+            ),
+            "symbol": str(
+                first[
+                    "symbol"
+                ]
+            ),
+            "signal_date": (
+                first[
+                    "signal_date"
+                ]
+            ),
+            "entry_date": (
+                first[
+                    "entry_date"
+                ]
+            ),
+            "model_exit_state_date": (
+                chosen[
+                    "state_date"
+                ]
+            ),
+            "model_exit_age_sessions": int(
+                chosen[
+                    "holding_age_sessions"
+                ]
+            ),
+            "forced_terminal": bool(
+                forced_terminal
+            ),
+            "model_net_return": (
+                model_return
+            ),
+            "forced_20d_net_return": (
+                forced_return
+            ),
+            "oracle_best_net_return": (
+                oracle_return
+            ),
+            "gain_vs_forced": (
+                model_return
+                - forced_return
+            ),
+            "regret_vs_oracle": (
+                oracle_return
+                - model_return
+            ),
+        })
+
+    episodes = pd.DataFrame(
+        episode_rows
+    )
+
+    if episodes.empty:
+        raise RuntimeError(
+            "Sequential controller evaluation "
+            "produced no episodes."
+        )
+
+    oracle_headroom = (
+        episodes[
+            "oracle_best_net_return"
+        ]
+        - episodes[
+            "forced_20d_net_return"
+        ]
+    )
+
+    model_gain = (
+        episodes[
+            "gain_vs_forced"
+        ]
+    )
+
+    denominator = float(
+        oracle_headroom.mean()
+    )
+    captured = (
+        float(
+            model_gain.mean()
+            / denominator
+        )
+        if denominator
+        > 1e-12
+        else np.nan
+    )
+
+    metrics = {
+        "episodes": int(
+            len(
+                episodes
+            )
+        ),
+        "threshold": float(
+            threshold
+        ),
+        "mean_model_return": float(
+            episodes[
+                "model_net_return"
+            ].mean()
+        ),
+        "median_model_return": float(
+            episodes[
+                "model_net_return"
+            ].median()
+        ),
+        "mean_forced_20d_return": float(
+            episodes[
+                "forced_20d_net_return"
+            ].mean()
+        ),
+        "mean_oracle_return": float(
+            episodes[
+                "oracle_best_net_return"
+            ].mean()
+        ),
+        "mean_gain_vs_forced": float(
+            model_gain.mean()
+        ),
+        "median_gain_vs_forced": float(
+            model_gain.median()
+        ),
+        "positive_gain_fraction": float(
+            model_gain.gt(
+                0
+            ).mean()
+        ),
+        "nonnegative_gain_fraction": float(
+            model_gain.ge(
+                0
+            ).mean()
+        ),
+        "mean_regret_vs_oracle": float(
+            episodes[
+                "regret_vs_oracle"
+            ].mean()
+        ),
+        "median_regret_vs_oracle": float(
+            episodes[
+                "regret_vs_oracle"
+            ].median()
+        ),
+        "oracle_headroom_captured": (
+            captured
+        ),
+        "mean_exit_age_sessions": float(
+            episodes[
+                "model_exit_age_sessions"
+            ].mean()
+        ),
+        "median_exit_age_sessions": float(
+            episodes[
+                "model_exit_age_sessions"
+            ].median()
+        ),
+        "forced_terminal_fraction": float(
+            episodes[
+                "forced_terminal"
+            ].mean()
+        ),
+        "model_win_fraction": float(
+            episodes[
+                "model_net_return"
+            ].gt(
+                0
+            ).mean()
+        ),
+        "forced_20d_win_fraction": float(
+            episodes[
+                "forced_20d_net_return"
+            ].gt(
+                0
+            ).mean()
+        ),
+    }
+
+    return (
+        metrics,
+        episodes,
+    )
+
+
 def train_tournament(
     root: Path,
     *,
@@ -2066,6 +2346,8 @@ def train_tournament(
 
     rows = []
     predictions = []
+    sequential_rows = []
+    sequential_episode_frames = []
 
     print(
         "\n=== CONTROLLER V1 TOURNAMENT ==="
@@ -2109,6 +2391,38 @@ def train_tournament(
             **metrics,
         })
 
+        for threshold in (
+            CONTINUATION_THRESHOLDS
+        ):
+            (
+                sequential_metrics,
+                sequential_episodes,
+            ) = evaluate_sequential_policy(
+                validation,
+                pred,
+                threshold=float(
+                    threshold
+                ),
+            )
+            sequential_rows.append({
+                "model": name,
+                **sequential_metrics,
+            })
+            sequential_episodes = (
+                sequential_episodes.copy()
+            )
+            sequential_episodes[
+                "model"
+            ] = name
+            sequential_episodes[
+                "threshold"
+            ] = float(
+                threshold
+            )
+            sequential_episode_frames.append(
+                sequential_episodes
+            )
+
         prediction_frame = validation[
             [
                 "episode_id",
@@ -2138,16 +2452,87 @@ def train_tournament(
             prediction_frame
         )
 
+        model_seq = pd.DataFrame(
+            [
+                row
+                for row
+                in sequential_rows
+                if row[
+                    "model"
+                ]
+                == name
+            ]
+        )
+        best_seq = (
+            model_seq.sort_values(
+                [
+                    "mean_gain_vs_forced",
+                    "mean_regret_vs_oracle",
+                    "forced_terminal_fraction",
+                ],
+                ascending=[
+                    False,
+                    True,
+                    True,
+                ],
+            )
+            .iloc[
+                0
+            ]
+        )
+
         print(
             "  Spearman="
             f"{metrics['spearman_advantage']:+.3f} "
             "action-acc="
             f"{metrics['action_accuracy_nonzero']:.3f} "
-            "mean-regret="
+            "state-regret="
             f"{metrics['mean_regret_bps']:.1f} bps "
             "MAE="
             f"{metrics['mae_advantage'] * 10_000.0:.1f} bps"
         )
+        print(
+            "  best sequential threshold="
+            f"{float(best_seq['threshold']):.3f} "
+            "gain-vs-20d="
+            f"{float(best_seq['mean_gain_vs_forced']):+.2%} "
+            "oracle-captured="
+            f"{float(best_seq['oracle_headroom_captured']):.1%} "
+            "mean-exit-age="
+            f"{float(best_seq['mean_exit_age_sessions']):.1f}"
+        )
+
+    sequential_leaderboard = (
+        pd.DataFrame(
+            sequential_rows
+        )
+        .sort_values(
+            [
+                "mean_gain_vs_forced",
+                "mean_regret_vs_oracle",
+                "positive_gain_fraction",
+                "forced_terminal_fraction",
+            ],
+            ascending=[
+                False,
+                True,
+                False,
+                True,
+            ],
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+    sequential_leaderboard[
+        "development_rank"
+    ] = np.arange(
+        1,
+        len(
+            sequential_leaderboard
+        )
+        + 1,
+    )
 
     leaderboard = (
         pd.DataFrame(
@@ -2186,6 +2571,23 @@ def train_tournament(
         index=False,
     )
 
+    sequential_leaderboard.to_csv(
+        reports_root
+        / "sequential_policy_leaderboard.csv",
+        index=False,
+    )
+
+    if sequential_episode_frames:
+        pd.concat(
+            sequential_episode_frames,
+            ignore_index=True,
+        ).to_parquet(
+            reports_root
+            / "sequential_episode_results.parquet",
+            index=False,
+            compression="zstd",
+        )
+
     pd.concat(
         predictions,
         ignore_index=True,
@@ -2196,11 +2598,19 @@ def train_tournament(
         compression="zstd",
     )
 
-    best_model = str(
-        leaderboard.iloc[
+    best_sequential = (
+        sequential_leaderboard.iloc[
             0
-        ][
+        ]
+    )
+    best_model = str(
+        best_sequential[
             "model"
+        ]
+    )
+    best_threshold = float(
+        best_sequential[
+            "threshold"
         ]
     )
 
@@ -2222,24 +2632,37 @@ def train_tournament(
         "models": list(
             model_specs()
         ),
+        "continuation_thresholds": (
+            CONTINUATION_THRESHOLDS
+        ),
         "selection_rule": (
-            "lowest validation mean hindsight-action regret, "
-            "then MAE, then higher Spearman correlation"
+            "highest 2023 sequential mean episode gain versus forced "
+            "20-session exit; then lower regret versus hindsight oracle, "
+            "higher positive-gain fraction, and lower forced-terminal "
+            "fraction"
         ),
         "best_model": (
             best_model
         ),
+        "best_threshold": (
+            best_threshold
+        ),
         "best_metrics": (
-            leaderboard.iloc[
-                0
-            ].to_dict()
+            best_sequential.to_dict()
+        ),
+        "state_level_diagnostics_file": (
+            "controller_leaderboard.csv"
+        ),
+        "sequential_policy_file": (
+            "sequential_policy_leaderboard.csv"
         ),
         "important_limit": (
-            "This is one-step teacher imitation diagnostics, not yet "
-            "a sequential portfolio backtest. HOLD labels assume the "
-            "future oracle can continue acting optimally. The next stage "
-            "must run the learned controller recursively through the "
-            "historical simulator."
+            "Sequential evaluation is episode-level and causal with respect "
+            "to controller predictions, but it is not yet a full portfolio "
+            "equity-curve simulation. Slots are evaluated independently and "
+            "portfolio cash/exposure interactions are not represented here. "
+            "The next stage must run the frozen learned controller inside the "
+            "portfolio simulator."
         ),
     }
 
@@ -2294,6 +2717,77 @@ def self_test() -> None:
         True,
         False,
     ]
+
+    seq_frame = pd.DataFrame({
+        "episode_id": [
+            "a",
+            "a",
+            "a",
+        ],
+        "state_market_index": [
+            1,
+            2,
+            3,
+        ],
+        "symbol": [
+            "A",
+            "A",
+            "A",
+        ],
+        "signal_date": pd.to_datetime([
+            "2023-01-01",
+            "2023-01-01",
+            "2023-01-01",
+        ]),
+        "entry_date": pd.to_datetime([
+            "2023-01-02",
+            "2023-01-02",
+            "2023-01-02",
+        ]),
+        "state_date": pd.to_datetime([
+            "2023-01-02",
+            "2023-01-03",
+            "2023-01-04",
+        ]),
+        "holding_age_sessions": [
+            0,
+            1,
+            2,
+        ],
+        "exit_next_open_net_return": [
+            0.01,
+            0.04,
+            0.03,
+        ],
+        "oracle_best_net_return": [
+            0.04,
+            0.04,
+            0.03,
+        ],
+    })
+    seq_metrics, seq_rows = (
+        evaluate_sequential_policy(
+            seq_frame,
+            np.asarray([
+                0.02,
+                -0.01,
+                0.03,
+            ]),
+            threshold=0.0,
+        )
+    )
+    assert len(
+        seq_rows
+    ) == 1
+    assert abs(
+        seq_metrics[
+            "mean_model_return"
+        ]
+        - 0.04
+    ) < 1e-12
+    assert seq_metrics[
+        "mean_exit_age_sessions"
+    ] == 1.0
 
     assert len(
         B4_FEATURES
@@ -2473,22 +2967,26 @@ def main() -> None:
             "\n=== CONTROLLER V1 TOURNAMENT COMPLETE ==="
         )
         print(
-            f"Best model: {summary['best_model']}"
+            f"Best model:     {summary['best_model']}"
+        )
+        print(
+            "Best threshold: "
+            f"{float(summary['best_threshold']):.3f}"
         )
         metrics = summary[
             "best_metrics"
         ]
         print(
-            "Mean regret: "
-            f"{float(metrics['mean_regret_bps']):.1f} bps"
+            "Sequential gain vs 20d: "
+            f"{float(metrics['mean_gain_vs_forced']):+.2%}"
         )
         print(
-            "Action acc:  "
-            f"{float(metrics['action_accuracy_nonzero']):.3f}"
+            "Oracle headroom captured: "
+            f"{float(metrics['oracle_headroom_captured']):.1%}"
         )
         print(
-            "Spearman:    "
-            f"{float(metrics['spearman_advantage']):+.3f}"
+            "Mean exit age:  "
+            f"{float(metrics['mean_exit_age_sessions']):.1f} sessions"
         )
 
 
