@@ -1513,8 +1513,26 @@ def add_calendar_features(
 
 def add_cross_sectional_features(
     df: pd.DataFrame,
+    *,
+    rank_mask: pd.Series | None = None,
 ) -> pd.DataFrame:
     df = df.copy()
+
+    if rank_mask is None:
+        rank_mask = pd.Series(
+            True,
+            index=df.index,
+        )
+    else:
+        rank_mask = (
+            rank_mask
+            .reindex(
+                df.index,
+                fill_value=False,
+            )
+            .fillna(False)
+            .astype(bool)
+        )
 
     mapping = {
         "return_5d": (
@@ -1543,8 +1561,15 @@ def add_cross_sectional_features(
     for source, target in (
         mapping.items()
     ):
-        df[target] = (
-            df.groupby(
+        df[target] = np.nan
+        df.loc[
+            rank_mask,
+            target,
+        ] = (
+            df.loc[
+                rank_mask
+            ]
+            .groupby(
                 "date",
                 sort=False,
             )[source]
@@ -1858,10 +1883,80 @@ def build_enriched_features(
     *,
     root: Path,
     context_path: Path,
+    security_scope: str = "auto",
 ) -> tuple[
     pd.DataFrame,
     dict,
 ]:
+    df, has_context = (
+        attach_point_in_time_context(
+            df,
+            context_path,
+        )
+    )
+
+    if security_scope not in {
+        "auto",
+        "all",
+        "ever-largecap",
+    }:
+        raise ValueError(
+            "security_scope must be one of "
+            "auto, all, ever-largecap"
+        )
+
+    effective_scope = security_scope
+    if effective_scope == "auto":
+        effective_scope = (
+            "ever-largecap"
+            if has_context
+            else "all"
+        )
+
+    if effective_scope == "ever-largecap":
+        if not has_context:
+            raise RuntimeError(
+                "ever-largecap scope requires "
+                "dated point-in-time context."
+            )
+        ever_largecap = set(
+            df.loc[
+                pd.to_numeric(
+                    df[
+                        "largecap_flag_numeric"
+                    ],
+                    errors="coerce",
+                ).eq(1.0),
+                "canonical_security_id",
+            ]
+            .dropna()
+            .astype(str)
+        )
+        if not ever_largecap:
+            raise RuntimeError(
+                "Point-in-time context contains "
+                "no large-cap memberships."
+            )
+
+        # Keep every historical row for securities
+        # that ever enter the large-cap universe.
+        # This preserves pre-entry rolling history.
+        df = (
+            df.loc[
+                df[
+                    "canonical_security_id"
+                ]
+                .astype(str)
+                .isin(
+                    ever_largecap
+                )
+            ]
+            .copy()
+            .reset_index(
+                drop=True
+            )
+        )
+
     df = add_ohlc_geometry(
         df
     )
@@ -1883,14 +1978,28 @@ def build_enriched_features(
     df = add_calendar_features(
         df
     )
-    df = add_cross_sectional_features(
-        df
-    )
-    df, has_context = (
-        attach_point_in_time_context(
-            df,
-            context_path,
+
+    if has_context:
+        rank_mask = pd.to_numeric(
+            df[
+                "largecap_flag_numeric"
+            ],
+            errors="coerce",
+        ).eq(1.0)
+        rank_universe = (
+            "point_in_time_largecap"
         )
+    else:
+        rank_mask = df[
+            "eligible_universe"
+        ].fillna(False)
+        rank_universe = (
+            "existing_eligible_universe"
+        )
+
+    df = add_cross_sectional_features(
+        df,
+        rank_mask=rank_mask,
     )
     df = finalize_numeric_types(
         df
@@ -1910,6 +2019,12 @@ def build_enriched_features(
             bool(
                 has_context
             )
+        ),
+        "security_scope": (
+            effective_scope
+        ),
+        "cross_section_rank_universe": (
+            rank_universe
         ),
         "absolute_year_model_feature": (
             False
@@ -2291,6 +2406,21 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--security-scope",
+        choices=[
+            "auto",
+            "all",
+            "ever-largecap",
+        ],
+        default="auto",
+        help=(
+            "auto uses all securities when no "
+            "PIT context exists and all history "
+            "for ever-large-cap securities once "
+            "context is available."
+        ),
+    )
+    ap.add_argument(
         "--overwrite",
         action="store_true",
     )
@@ -2329,6 +2459,9 @@ def main() -> None:
             root=root,
             context_path=(
                 context_path
+            ),
+            security_scope=(
+                args.security_scope
             ),
         )
     )
