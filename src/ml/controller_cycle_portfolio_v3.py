@@ -33,7 +33,11 @@ from baselines import (  # noqa: E402
     max_affordable_quantity,
 )
 from quant_metrics import (  # noqa: E402
+    benchmark_relative_metrics,
     compute_performance_metrics,
+)
+from nested_generalization import (  # noqa: E402
+    benchmark_rows,
 )
 from persistent_portfolio import (  # noqa: E402
     close_position,
@@ -1493,6 +1497,34 @@ def main() -> None:
         root
     )
 
+    benchmark_table, benchmark_curves = (
+        benchmark_rows(
+            root,
+            panel_dates=set(
+                panel[
+                    "date"
+                ].dropna()
+            ),
+            capital=float(
+                args.capital
+            ),
+            annual_risk_free_rate=float(
+                args.risk_free_rate
+            ),
+        )
+    )
+    if (
+        "NIFTY 100"
+        not in benchmark_curves
+    ):
+        raise RuntimeError(
+            "NIFTY 100 benchmark is required "
+            "for controller portfolio evaluation."
+        )
+    nifty100 = benchmark_curves[
+        "NIFTY 100"
+    ]
+
     output_root = (
         root
         / "reports/ml/"
@@ -1549,9 +1581,25 @@ def main() -> None:
             ),
         )
 
-        metrics = result[
-            "metrics"
-        ]
+        metrics = dict(
+            result[
+                "metrics"
+            ]
+        )
+        relative = (
+            benchmark_relative_metrics(
+                result[
+                    "equity"
+                ],
+                nifty100,
+                annual_risk_free_rate=float(
+                    args.risk_free_rate
+                ),
+            )
+        )
+        metrics.update(
+            relative
+        )
         leaderboard_rows.append(
             metrics
         )
@@ -1694,6 +1742,12 @@ def main() -> None:
         index=False,
     )
 
+    benchmark_table.to_csv(
+        output_root
+        / "benchmark_metrics.csv",
+        index=False,
+    )
+
     pd.concat(
         equity_frames,
         ignore_index=True,
@@ -1767,6 +1821,9 @@ def main() -> None:
         ),
         "cost_profile": asdict(
             costs
+        ),
+        "benchmark": (
+            "NIFTY 100 price index"
         ),
         "signal_dates": int(
             len(
