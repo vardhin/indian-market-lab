@@ -823,25 +823,148 @@ def parse_workbook(
         keep=False,
     )
 
-    if duplicated.any():
-        sample = rows.loc[
-            duplicated,
-            [
-                "isin",
-                "company_name",
-                "amfi_market_cap_rank",
-            ],
-        ].head(
-            20
+    rows[
+        "duplicate_isin_count"
+    ] = (
+        rows.groupby(
+            "isin",
+            sort=False,
+        )[
+            "isin"
+        ].transform(
+            "size"
+        ).astype(
+            "int16"
         )
+    )
 
-        raise RuntimeError(
-            f"{path.name}: duplicate ISINs "
-            "inside snapshot. Sample:\n"
-            + sample.to_string(
-                index=False
+    rows[
+        "duplicate_rank_min"
+    ] = (
+        rows.groupby(
+            "isin",
+            sort=False,
+        )[
+            "amfi_market_cap_rank"
+        ].transform(
+            "min"
+        )
+    )
+    rows[
+        "duplicate_rank_max"
+    ] = (
+        rows.groupby(
+            "isin",
+            sort=False,
+        )[
+            "amfi_market_cap_rank"
+        ].transform(
+            "max"
+        )
+    )
+
+    category_nunique = (
+        rows[
+            "amfi_cap_bucket"
+        ]
+        .fillna(
+            "__MISSING__"
+        )
+        .groupby(
+            rows[
+                "isin"
+            ],
+            sort=False,
+        )
+        .transform(
+            "nunique"
+        )
+    )
+
+    rows[
+        "duplicate_category_disagreement"
+    ] = (
+        rows[
+            "duplicate_isin_count"
+        ].gt(
+            1
+        )
+        & category_nunique.gt(
+            1
+        )
+    )
+
+    market_cap_nunique = (
+        rows[
+            "amfi_average_market_cap_cr"
+        ]
+        .round(
+            8
+        )
+        .fillna(
+            float(
+                "-inf"
             )
         )
+        .groupby(
+            rows[
+                "isin"
+            ],
+            sort=False,
+        )
+        .transform(
+            "nunique"
+        )
+    )
+
+    rows[
+        "duplicate_market_cap_disagreement"
+    ] = (
+        rows[
+            "duplicate_isin_count"
+        ].gt(
+            1
+        )
+        & market_cap_nunique.gt(
+            1
+        )
+    )
+
+    # AMFI workbooks can contain the same ISIN more than once
+    # (typically duplicate exchange/name rows).  Do not duplicate
+    # one security in our PIT join.  Use the best/smallest published
+    # rank as the representative row, but treat category disagreement
+    # as unresolved rather than silently choosing a side.
+    if duplicated.any():
+        rows = (
+            rows.sort_values(
+                [
+                    "isin",
+                    "amfi_market_cap_rank",
+                ],
+                kind="stable",
+            )
+            .drop_duplicates(
+                "isin",
+                keep="first",
+            )
+            .reset_index(
+                drop=True
+            )
+        )
+
+        conflict = rows[
+            "duplicate_category_disagreement"
+        ]
+
+        rows.loc[
+            conflict,
+            "amfi_cap_bucket",
+        ] = pd.NA
+        rows.loc[
+            conflict,
+            "category_rank_match",
+        ] = False
 
     return rows.sort_values(
         "amfi_market_cap_rank"
@@ -1075,6 +1198,26 @@ def build_archive(
                     "small_cap"
                 ).sum()
             ),
+            "duplicate_isin_groups": int(
+                parsed.loc[
+                    parsed[
+                        "duplicate_isin_count"
+                    ].gt(
+                        1
+                    ),
+                    "isin",
+                ].nunique()
+            ),
+            "duplicate_category_conflicts": int(
+                parsed[
+                    "duplicate_category_disagreement"
+                ].sum()
+            ),
+            "duplicate_market_cap_conflicts": int(
+                parsed[
+                    "duplicate_market_cap_disagreement"
+                ].sum()
+            ),
             "category_rank_mismatches": int(
                 (
                     ~parsed[
@@ -1199,6 +1342,31 @@ def build_archive(
         ),
         "availability_policy": (
             "conservative_one_full_month_after_period_end"
+        ),
+        "duplicate_isin_groups": int(
+            snapshots.loc[
+                snapshots[
+                    "duplicate_isin_count"
+                ].gt(
+                    1
+                ),
+                [
+                    "measurement_end",
+                    "isin",
+                ],
+            ].drop_duplicates().shape[
+                0
+            ]
+        ),
+        "duplicate_category_conflicts": int(
+            snapshots[
+                "duplicate_category_disagreement"
+            ].sum()
+        ),
+        "duplicate_market_cap_conflicts": int(
+            snapshots[
+                "duplicate_market_cap_disagreement"
+            ].sum()
         ),
         "rank_category_mismatches": int(
             (
