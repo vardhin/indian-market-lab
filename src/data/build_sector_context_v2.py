@@ -880,16 +880,30 @@ def compute_security_context(
         beta_252_pit
     )
 
-    margin = (
-        best_value
-        - second_value
+    margin = np.full(
+        n,
+        np.nan,
+        dtype=float,
     )
-    margin[
-        no_selection
-        | ~np.isfinite(
+    valid_margin = (
+        ~no_selection
+        & np.isfinite(
+            best_value
+        )
+        & np.isfinite(
             second_value
         )
-    ] = np.nan
+    )
+    margin[
+        valid_margin
+    ] = (
+        best_value[
+            valid_margin
+        ]
+        - second_value[
+            valid_margin
+        ]
+    )
 
     group[
         "sector_proxy_corr_margin_252d"
