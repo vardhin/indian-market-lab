@@ -17,6 +17,7 @@ RESEARCH_REQUIRED = [
     "symbol",
     "open",
     "close",
+    "turnover",
     "turnover_median_20d",
     "turnover_median_60d",
     "unsafe_target_window_20d",
@@ -498,6 +499,39 @@ def build_panel(
                 )
             )
 
+        # Large-cap-only cross-sectional state.  The original F8
+        # sidecar ranks each stock against the whole same-date research
+        # panel.  Preserve that as broad-market breadth context, but
+        # explicitly add ranks within today's PIT large-cap universe so
+        # the two meanings are not conflated.
+        for source in (
+            "return_5d",
+            "return_20d",
+            "return_60d",
+            "turnover",
+        ):
+            output_name = (
+                "largecap_rank_"
+                + source
+            )
+            frame[
+                output_name
+            ] = (
+                pd.to_numeric(
+                    frame[
+                        source
+                    ],
+                    errors="coerce",
+                )
+                .rank(
+                    method="average",
+                    pct=True,
+                )
+                .astype(
+                    "float32"
+                )
+            )
+
         frame[
             "log_turnover_median_20d"
         ] = np.log1p(
@@ -699,6 +733,16 @@ def build_panel(
         "target_column": (
             "target_rank_20d_largecap"
         ),
+        "cross_section_context": {
+            "broad_market": (
+                "feature_panel_v2 cross_section_rank_* "
+                "computed across all same-date research-panel rows"
+            ),
+            "largecap_only": (
+                "largecap_rank_* recomputed within each "
+                "PIT large-cap date partition"
+            ),
+        },
         "universe": (
             "eligible_universe AND "
             "point-in-time AMFI large_cap"
