@@ -222,6 +222,13 @@ F8 = [
     "cross_section_rank_turnover",
 ]
 
+F8_LARGECAP = [
+    "largecap_rank_return_5d",
+    "largecap_rank_return_20d",
+    "largecap_rank_return_60d",
+    "largecap_rank_turnover",
+]
+
 F9 = [
     "day_of_week",
     "month_of_year",
@@ -242,6 +249,7 @@ FAMILIES = {
     "F6_lead_lag": F6,
     "F7_size": F7,
     "F8_cross_section": F8,
+    "F8_largecap_cross_section": F8_LARGECAP,
     "F9_calendar": F9,
 }
 
@@ -408,6 +416,21 @@ BRANCH_ORDER = [
         [
             *BRANCH_BASE_FAMILIES,
             "F9_calendar",
+        ],
+    ),
+    (
+        "B6_core_plus_F8_largecap",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F8_largecap_cross_section",
+        ],
+    ),
+    (
+        "B7_core_plus_F8_both",
+        [
+            *BRANCH_BASE_FAMILIES,
+            "F8_cross_section",
+            "F8_largecap_cross_section",
         ],
     ),
 ]
