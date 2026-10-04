@@ -720,11 +720,56 @@ def compute_security_context(
                 dtype=float
             )
 
+    # The basket used to contextualize session t is selected only from
+    # relationships estimated through t-1.  This is stricter than the
+    # after-close information boundary and avoids same-day adaptive
+    # basket selection: today's stock move cannot decide which sector's
+    # today's return is then used as its context.
+    def lag_matrix(
+        matrix: np.ndarray,
+    ) -> np.ndarray:
+        lagged = np.full_like(
+            matrix,
+            np.nan,
+            dtype=float,
+        )
+        if len(
+            matrix
+        ) > 1:
+            lagged[
+                1:,
+                :,
+            ] = matrix[
+                :-1,
+                :,
+            ]
+        return lagged
+
+    corr_120_pit = lag_matrix(
+        corr_120
+    )
+    corr_252_pit = lag_matrix(
+        corr_252
+    )
+    beta_120_pit = lag_matrix(
+        beta_120
+    )
+    beta_252_pit = lag_matrix(
+        beta_252
+    )
+    lead_corr_pit = {
+        lag: lag_matrix(
+            matrix
+        )
+        for lag, matrix
+        in lead_corr.items()
+    }
+
     # Sector affiliation is based on the highest positive trailing
-    # 252-session correlation. This is not a taxonomy lookup: it is
-    # a market-implied basket affinity known entirely from data <= t.
+    # 252-session correlation known through t-1. This is a market-
+    # implied basket affinity, not an official taxonomy label.
     selection_matrix = (
-        corr_252.copy()
+        corr_252_pit.copy()
     )
     selection_matrix[
         ~np.isfinite(
@@ -744,6 +789,23 @@ def compute_security_context(
             ),
             selected,
         ]
+    )
+
+    sorted_affinity = np.sort(
+        selection_matrix,
+        axis=1,
+    )
+    second_value = (
+        sorted_affinity[
+            :,
+            -2,
+        ]
+        if m >= 2
+        else np.full(
+            n,
+            -np.inf,
+            dtype=float,
+        )
     )
 
     no_selection = (
@@ -800,23 +862,38 @@ def compute_security_context(
     group[
         "sector_proxy_corr_120d"
     ] = choose(
-        corr_120
+        corr_120_pit
     )
     group[
         "sector_proxy_corr_252d"
     ] = choose(
-        corr_252
+        corr_252_pit
     )
     group[
         "sector_proxy_beta_120d"
     ] = choose(
-        beta_120
+        beta_120_pit
     )
     group[
         "sector_proxy_beta_252d"
     ] = choose(
-        beta_252
+        beta_252_pit
     )
+
+    margin = (
+        best_value
+        - second_value
+    )
+    margin[
+        no_selection
+        | ~np.isfinite(
+            second_value
+        )
+    ] = np.nan
+
+    group[
+        "sector_proxy_corr_margin_252d"
+    ] = margin
 
     group[
         "sector_proxy_confident"
@@ -825,6 +902,16 @@ def compute_security_context(
             "sector_proxy_corr_252d"
         ].ge(
             0.20
+        )
+    )
+
+    group[
+        "sector_proxy_distinct"
+    ] = (
+        group[
+            "sector_proxy_corr_margin_252d"
+        ].ge(
+            0.05
         )
     )
 
@@ -999,7 +1086,7 @@ def compute_security_context(
                 f"lag{lag}_120d"
             )
         ] = choose(
-            lead_corr[
+            lead_corr_pit[
                 lag
             ]
         )
@@ -1269,7 +1356,9 @@ def build_sector_context(
         "sector_proxy_corr_252d",
         "sector_proxy_beta_120d",
         "sector_proxy_beta_252d",
+        "sector_proxy_corr_margin_252d",
         "sector_proxy_confident",
+        "sector_proxy_distinct",
         "sector_response_gap_120d",
         "sector_response_gap_252d",
     ]
@@ -1348,6 +1437,7 @@ def build_sector_context(
             "symbol",
             "sector_proxy_name",
             "sector_proxy_confident",
+            "sector_proxy_distinct",
         }
     ]
 
@@ -1511,8 +1601,20 @@ def build_sector_context(
                     ).mean()
                 ),
             ),
+            distinct_fraction=(
+                "sector_proxy_distinct",
+                lambda values: float(
+                    values.fillna(
+                        False
+                    ).mean()
+                ),
+            ),
             median_proxy_corr_252d=(
                 "sector_proxy_corr_252d",
+                "median",
+            ),
+            median_proxy_margin_252d=(
+                "sector_proxy_corr_margin_252d",
                 "median",
             ),
         )
@@ -1561,15 +1663,29 @@ def build_sector_context(
                 False
             ).mean()
         ),
+        "proxy_distinct_fraction": float(
+            output[
+                "sector_proxy_distinct"
+            ].fillna(
+                False
+            ).mean()
+        ),
         "median_proxy_corr_252d": float(
             output[
                 "sector_proxy_corr_252d"
             ].median()
         ),
+        "median_proxy_margin_252d": float(
+            output[
+                "sector_proxy_corr_margin_252d"
+            ].median()
+        ),
         "selection_rule": (
             "highest positive trailing "
             "252-session stock/sector-index "
-            "return correlation; no future data"
+            "return correlation estimated "
+            "through t-1; no same-day adaptive "
+            "basket selection"
         ),
         "taxonomy_claim": (
             "market-implied sector basket; "
@@ -1742,8 +1858,16 @@ def main() -> None:
         f"{summary['proxy_confident_fraction']:.2%}"
     )
     print(
+        f"Proxy distinct:    "
+        f"{summary['proxy_distinct_fraction']:.2%}"
+    )
+    print(
         f"Median corr 252d:  "
         f"{summary['median_proxy_corr_252d']:.3f}"
+    )
+    print(
+        f"Median margin:      "
+        f"{summary['median_proxy_margin_252d']:.3f}"
     )
     print(
         f"Output:            "
