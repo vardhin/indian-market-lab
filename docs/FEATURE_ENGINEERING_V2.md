@@ -233,3 +233,73 @@ uv run python src/data/feature_engineering_v2.py
 
 The next gated step is to source and validate point-in-time large-cap and
 sector/industry data before F5/F7 are allowed into model training.
+
+
+## Point-in-time large-cap metadata
+
+AMFI ingestion is implemented in:
+
+```text
+src/data/amfi_market_cap.py
+```
+
+It discovers and caches the official AMFI historical Excel workbooks, parses
+ISIN, rank, average market capitalization, NSE symbol and SEBI cap bucket, and
+writes normalized snapshots under:
+
+```text
+data/processed/amfi_market_cap/
+```
+
+Historical publication timestamps are not assumed from the six-month
+measurement end. The default research availability policy is deliberately
+conservative:
+
+```text
+Jan-Jun measurement  -> effective Aug 1
+Jul-Dec measurement  -> effective Feb 1 of the following year
+```
+
+The prior snapshot remains active until the next conservative effective date.
+
+The research-panel join is implemented as a second sidecar:
+
+```text
+src/data/build_pit_metadata_v2.py
+data/processed/pit_metadata_v2/
+```
+
+AMFI membership is joined by resolved ISIN only, with a canonical ISIN fallback.
+There is deliberately no symbol-only classification fallback. Unknown
+classification is represented as unknown rather than silently treating the
+security as small cap.
+
+The intended large-cap research flag is:
+
+```text
+pit_largecap_universe
+  = eligible_universe
+    AND point-in-time AMFI large-cap classification
+```
+
+This makes the large-cap experiment available only once a defensible AMFI
+classification is point-in-time available.
+
+## Future-mutation leakage regression
+
+The strongest feature-v2 leakage regression is:
+
+```text
+src/data/test_feature_engineering_v2_leakage.py
+```
+
+It loads real research-panel rows around a historical cutoff, computes every
+implemented v2 feature, then deliberately corrupts all stock and broad-market
+source values after the cutoff and rebuilds the features.
+
+Every feature at or before the cutoff must remain numerically identical. Any
+difference fails the test and writes the exact date/security/feature mismatch.
+
+This is complementary to construction-time reasoning: it catches accidental
+future dependence introduced by shifts, joins, expanding statistics or later
+refactors.
