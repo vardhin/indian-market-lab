@@ -361,9 +361,19 @@ ABLATION_ORDER = [
     ),
     (
         "A10_plus_F9",
-        list(
-            FAMILIES
-        ),
+        [
+            "F0_baseline",
+            "F1_ohlc",
+            "F2_streak",
+            "F3_tendency",
+            "F4_market",
+            "F5a_sector_dynamics",
+            "F5b_sector_identity",
+            "F6_lead_lag",
+            "F7_size",
+            "F8_cross_section",
+            "F9_calendar",
+        ],
     ),
 ]
 
