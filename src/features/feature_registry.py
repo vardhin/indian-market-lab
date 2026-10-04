@@ -205,28 +205,15 @@ def feature_columns(
 def cumulative_feature_sets(
     groups: Iterable[str] = SAFE_DEFAULT_GROUPS,
 ) -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {}
-    running: list[str] = []
-
-    for group in groups:
-        running.extend(
-            FEATURE_GROUPS[group]
-        )
-        out[
-            "+".join(
-                list(out.keys())[-1:]
-            )
-            if False
-            else group
-        ] = list(
-            dict.fromkeys(running)
-        )
-
-    # More readable labels: F0, F0+F1, ...
     named: dict[str, list[str]] = {}
-    running = []
+    running: list[str] = []
     labels: list[str] = []
+
     for group in groups:
+        if group not in FEATURE_GROUPS:
+            raise KeyError(
+                f"Unknown feature group: {group}"
+            )
         labels.append(group)
         running.extend(
             FEATURE_GROUPS[group]
@@ -236,6 +223,7 @@ def cumulative_feature_sets(
         ] = list(
             dict.fromkeys(running)
         )
+
     return named
 
 
