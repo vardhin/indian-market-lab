@@ -756,7 +756,6 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.self_test:
-        import math
         self_test()
         return
 
