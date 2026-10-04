@@ -61,6 +61,7 @@ FEATURE_SET = "B4_core_plus_F8"
 HORIZON = 20
 TOP_K = 5
 REBALANCE_SESSIONS = 20
+REBALANCE_ANCHOR_MARKET_INDEX = 0
 
 DEVELOPMENT_YEARS = [
     2021,
@@ -806,15 +807,24 @@ def build_teacher(
         df
     )
 
-    signal_positions = list(
-        range(
-            0,
-            len(
-                indices
-            ),
-            REBALANCE_SESSIONS,
+    # Use one global market-calendar phase rather than restarting the
+    # rebalance clock at the beginning of each evaluation slice. This makes
+    # development and confirmation follow the same deployable cadence.
+    signal_positions = [
+        position
+        for position, market_index
+        in enumerate(
+            indices
         )
-    )
+        if (
+            int(
+                market_index
+            )
+            - REBALANCE_ANCHOR_MARKET_INDEX
+        )
+        % REBALANCE_SESSIONS
+        == 0
+    ]
 
     teacher_rows: list[
         dict
@@ -1665,6 +1675,9 @@ def build_teacher(
         "top_k": TOP_K,
         "rebalance_sessions": (
             REBALANCE_SESSIONS
+        ),
+        "rebalance_anchor_market_index": int(
+            REBALANCE_ANCHOR_MARKET_INDEX
         ),
         "horizon": HORIZON,
         "slot_budget": float(
@@ -2788,6 +2801,30 @@ def self_test() -> None:
     assert seq_metrics[
         "mean_exit_age_sessions"
     ] == 1.0
+
+    test_indices = [
+        101,
+        120,
+        121,
+        140,
+        160,
+    ]
+    aligned = [
+        market_index
+        for market_index
+        in test_indices
+        if (
+            market_index
+            - REBALANCE_ANCHOR_MARKET_INDEX
+        )
+        % REBALANCE_SESSIONS
+        == 0
+    ]
+    assert aligned == [
+        120,
+        140,
+        160,
+    ]
 
     assert len(
         B4_FEATURES
