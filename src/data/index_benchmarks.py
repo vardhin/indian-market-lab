@@ -22,6 +22,7 @@ NSE_INDEX_HISTORY = (
 
 DEFAULT_INDICES = [
     "NIFTY 50",
+    "NIFTY 100",
     "NIFTY 500",
 ]
 
