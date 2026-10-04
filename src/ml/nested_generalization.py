@@ -1617,6 +1617,7 @@ def benchmark_rows(
 
     for name in (
         "NIFTY 50",
+        "NIFTY 100",
         "NIFTY 500",
     ):
         source = data.loc[
@@ -1624,6 +1625,10 @@ def benchmark_rows(
                 "requested_index"
             ].eq(name)
         ].copy()
+
+        if source.empty:
+            continue
+
         curve = index_curve(
             source,
             initial_capital=capital,
