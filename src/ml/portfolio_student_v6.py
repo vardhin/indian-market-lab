@@ -676,9 +676,16 @@ def prepare_ranker_data(
         dtype=int,
     )
 
-    relevance = (
+    raw_relevance = (
         max_rank_by_state
         - rank
+    )
+    relevance = (
+        (
+            raw_relevance
+            + 1
+        )
+        // 2
     ).astype(
         np.int32,
         copy=False,
@@ -748,6 +755,7 @@ def fit_lightgbm_ranker(
         subsample=0.85,
         colsample_bytree=0.70,
         reg_lambda=1.0,
+        lambdarank_truncation_level=10,
         random_state=RANDOM_STATE,
         n_jobs=n_jobs,
         verbosity=-1,
@@ -1097,6 +1105,74 @@ def evaluate(
         / "state_ranking_results_partial.parquet"
     )
 
+    if (
+        only is not None
+        and partial_leaderboard.is_file()
+    ):
+        previous = pd.read_csv(
+            partial_leaderboard
+        )
+        previous = previous.loc[
+            previous[
+                "candidate"
+            ].ne(
+                only
+            )
+        ]
+        leaderboard_rows = (
+            previous.to_dict(
+                "records"
+            )
+        )
+        if not any(
+            str(
+                row.get(
+                    "candidate"
+                )
+            )
+            == "random_expected"
+            for row
+            in leaderboard_rows
+        ):
+            leaderboard_rows.append(
+                {
+                    "candidate": (
+                        "random_expected"
+                    ),
+                    "family": "random",
+                    **random_metrics,
+                }
+            )
+        print(
+            "Loaded "
+            f"{len(previous):,} checkpointed leaderboard rows."
+        )
+
+    if (
+        only is not None
+        and partial_states.is_file()
+    ):
+        previous_states = pd.read_parquet(
+            partial_states
+        )
+        previous_states = (
+            previous_states.loc[
+                previous_states[
+                    "candidate"
+                ].ne(
+                    only
+                )
+            ]
+        )
+        if not previous_states.empty:
+            state_results.append(
+                previous_states
+            )
+        print(
+            "Loaded "
+            f"{len(previous_states):,} checkpointed state rows."
+        )
+
     def record(
         *,
         candidate: str,
@@ -1146,6 +1222,11 @@ def evaluate(
 
         pd.DataFrame(
             leaderboard_rows
+        ).drop_duplicates(
+            subset=[
+                "candidate"
+            ],
+            keep="last",
         ).to_csv(
             partial_leaderboard,
             index=False,
@@ -1154,6 +1235,12 @@ def evaluate(
         pd.concat(
             state_results,
             ignore_index=True,
+        ).drop_duplicates(
+            subset=[
+                "candidate",
+                "state_key",
+            ],
+            keep="last",
         ).to_parquet(
             partial_states,
             index=False,
@@ -1518,7 +1605,8 @@ def evaluate(
                     "state_key query groups"
                 ),
                 "relevance": (
-                    "max_action_rank - action_rank"
+                    "ceil((max_action_rank - action_rank) / 2), "
+                    "graded 0..16"
                 ),
             },
         )
@@ -1559,7 +1647,8 @@ def evaluate(
                     "state_key qid"
                 ),
                 "relevance": (
-                    "max_action_rank - action_rank"
+                    "ceil((max_action_rank - action_rank) / 2), "
+                    "graded 0..16"
                 ),
                 "objective": (
                     "rank:pairwise"
@@ -1604,7 +1693,8 @@ def evaluate(
                     "state_key qid"
                 ),
                 "relevance": (
-                    "max_action_rank - action_rank"
+                    "ceil((max_action_rank - action_rank) / 2), "
+                    "graded 0..16"
                 ),
                 "objective": (
                     "rank:ndcg"
@@ -1697,6 +1787,12 @@ def evaluate(
     pd.concat(
         state_results,
         ignore_index=True,
+    ).drop_duplicates(
+        subset=[
+            "candidate",
+            "state_key",
+        ],
+        keep="last",
     ).to_parquet(
         report_root
         / "state_ranking_results.parquet",
@@ -1711,11 +1807,26 @@ def evaluate(
             "candidate"
         ]
     )
-    best_bundle = (
-        model_bundles[
-            best_candidate
-        ]
+    best_bundle = model_bundles.get(
+        best_candidate
     )
+    best_candidate_path = (
+        model_root
+        / f"{best_candidate}.joblib"
+    )
+    if (
+        best_bundle is None
+        and best_candidate_path.is_file()
+    ):
+        best_bundle = joblib.load(
+            best_candidate_path
+        )
+
+    if best_bundle is None:
+        raise RuntimeError(
+            "Best candidate model bundle is unavailable: "
+            f"{best_candidate}"
+        )
 
     selection_rule = (
         "lowest 2023 mean normalized regret; then lower mean action "
@@ -1951,12 +2062,12 @@ def self_test() -> None:
         3,
     )
     assert relevance.tolist() == [
-        3,
         2,
         1,
+        1,
         0,
-        3,
         2,
+        1,
         1,
         0,
     ]
