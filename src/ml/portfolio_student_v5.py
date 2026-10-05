@@ -415,9 +415,8 @@ def pairwise_sgd_classifier() -> SGDClassifier:
         penalty="elasticnet",
         alpha=1e-4,
         l1_ratio=0.05,
-        max_iter=250,
-        tol=1e-4,
-        class_weight="balanced",
+        max_iter=12,
+        tol=None,
         random_state=RANDOM_STATE,
         average=True,
     )
@@ -495,6 +494,66 @@ def fit_extra_trees_with_progress(
     return model
 
 
+def fit_sgd_with_progress(
+    model: SGDClassifier,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    desc: str,
+    sample_weight: np.ndarray | None = None,
+    batch_size: int = 8192,
+):
+    epochs = max(1, int(model.max_iter))
+    n_rows = int(len(y))
+    batches_per_epoch = int(math.ceil(n_rows / batch_size))
+    total_batches = epochs * batches_per_epoch
+    classes = np.asarray([0, 1], dtype=np.int8)
+    rng = np.random.default_rng(RANDOM_STATE)
+
+    with tqdm(
+        total=total_batches,
+        desc=desc,
+        unit="batch",
+        dynamic_ncols=True,
+        leave=False,
+    ) as bar:
+        first = True
+        for epoch in range(epochs):
+            order = rng.permutation(n_rows)
+
+            for start in range(0, n_rows, batch_size):
+                batch_idx = order[
+                    start : start + batch_size
+                ]
+                kwargs = {}
+                if sample_weight is not None:
+                    kwargs["sample_weight"] = sample_weight[batch_idx]
+
+                if first:
+                    model.partial_fit(
+                        x[batch_idx],
+                        y[batch_idx],
+                        classes=classes,
+                        **kwargs,
+                    )
+                    first = False
+                else:
+                    model.partial_fit(
+                        x[batch_idx],
+                        y[batch_idx],
+                        **kwargs,
+                    )
+
+                bar.update(1)
+                bar.set_postfix(
+                    epoch=f"{epoch + 1}/{epochs}",
+                    rows=f"{min(start + batch_size, n_rows):,}/{n_rows:,}",
+                    refresh=False,
+                )
+
+    return model
+
+
 def fit_model_with_progress(
     model,
     x: np.ndarray,
@@ -523,6 +582,18 @@ def fit_model_with_progress(
         ExtraTreesRegressor,
     ):
         return fit_extra_trees_with_progress(
+            model,
+            x,
+            y,
+            desc=desc,
+            sample_weight=sample_weight,
+        )
+
+    if isinstance(
+        model,
+        SGDClassifier,
+    ):
+        return fit_sgd_with_progress(
             model,
             x,
             y,
@@ -768,6 +839,7 @@ def evaluate_teacher(
     root: Path,
     n_jobs: int,
     max_pairs_per_state: int,
+    only: str | None = None,
 ) -> dict:
     teacher = teacher.copy()
     teacher["state_date"] = pd.to_datetime(
@@ -858,6 +930,28 @@ def evaluate_teacher(
     state_results: list[pd.DataFrame] = []
     model_bundles: dict[str, dict] = {}
 
+    partial_leaderboard_path = (
+        report_root / "leaderboard_partial.csv"
+    )
+    partial_state_path = (
+        report_root / "state_ranking_results_partial.parquet"
+    )
+
+    if only is not None and partial_leaderboard_path.is_file():
+        previous = pd.read_csv(partial_leaderboard_path)
+        leaderboard_rows = previous.to_dict("records")
+        print(
+            f"Loaded {len(previous):,} checkpointed leaderboard rows."
+        )
+
+    if only is not None and partial_state_path.is_file():
+        previous_states = pd.read_parquet(partial_state_path)
+        if not previous_states.empty:
+            state_results.append(previous_states)
+        print(
+            f"Loaded {len(previous_states):,} checkpointed state rows."
+        )
+
     random_metrics = random_expected_metrics(validation)
     print(
         "\nRandom expected: "
@@ -866,14 +960,18 @@ def evaluate_teacher(
         f"regret={random_metrics['mean_action_regret']:.5f} "
         f"norm={random_metrics['mean_normalized_regret']:.3f}"
     )
-    leaderboard_rows.append(
-        {
-            "candidate": "random_expected",
-            "formulation": "random",
-            "model": "uniform_random",
-            **random_metrics,
-        }
-    )
+    if not any(
+        str(row.get("candidate")) == "random_expected"
+        for row in leaderboard_rows
+    ):
+        leaderboard_rows.append(
+            {
+                "candidate": "random_expected",
+                "formulation": "random",
+                "model": "uniform_random",
+                **random_metrics,
+            }
+        )
 
     def record(
         *,
@@ -927,34 +1025,49 @@ def evaluate_teacher(
             f"rho={metrics['mean_within_state_spearman']:+.3f}"
         )
 
+    selected_candidates = (
+        [only]
+        if only is not None
+        else [
+            "absolute_q_histgb",
+            "regret_histgb",
+            "regret_extra_trees",
+            "normalized_regret_histgb",
+            "normalized_regret_extra_trees",
+            "pairwise_histgb",
+            "pairwise_sgd_logistic",
+        ]
+    )
+
     tournament_bar = tqdm(
-        total=7,
+        total=len(selected_candidates),
         desc="V5 tournament",
         unit="model",
         dynamic_ncols=True,
     )
 
-    print("\n--- Absolute-Q baseline ---")
-    absolute_model = histgb_regressor()
-    fit_model_with_progress(
-        absolute_model,
-        x_train,
-        train["oracle_q"].to_numpy(dtype=float),
-        desc="Fit absolute_q_histgb",
-    )
-    absolute_scores = absolute_model.predict(x_validation)
-    record(
-        candidate="absolute_q_histgb",
-        formulation="absolute_q",
-        model_name="histgb",
-        scores=absolute_scores,
-        bundle={
-            "formulation": "absolute_q",
-            "model": absolute_model,
-            "imputer": imputer,
-            "features": features,
-        },
-    )
+    if "absolute_q_histgb" in selected_candidates:
+        print("\n--- Absolute-Q baseline ---")
+        absolute_model = histgb_regressor()
+        fit_model_with_progress(
+            absolute_model,
+            x_train,
+            train["oracle_q"].to_numpy(dtype=float),
+            desc="Fit absolute_q_histgb",
+        )
+        absolute_scores = absolute_model.predict(x_validation)
+        record(
+            candidate="absolute_q_histgb",
+            formulation="absolute_q",
+            model_name="histgb",
+            scores=absolute_scores,
+            bundle={
+                "formulation": "absolute_q",
+                "model": absolute_model,
+                "imputer": imputer,
+                "features": features,
+            },
+        )
 
     regression_specs = [
         (
@@ -971,6 +1084,9 @@ def evaluate_teacher(
 
     print("\n--- Within-state regret regression ---")
     for name, factory in regression_specs:
+        candidate_name = f"regret_{name}"
+        if candidate_name not in selected_candidates:
+            continue
         model = factory()
         fit_model_with_progress(
             model,
@@ -980,7 +1096,7 @@ def evaluate_teacher(
         )
         scores = -model.predict(x_validation)
         record(
-            candidate=f"regret_{name}",
+            candidate=candidate_name,
             formulation="regret",
             model_name=name,
             scores=scores,
@@ -994,6 +1110,9 @@ def evaluate_teacher(
 
     print("\n--- Normalized-regret regression ---")
     for name, factory in regression_specs:
+        candidate_name = f"normalized_regret_{name}"
+        if candidate_name not in selected_candidates:
+            continue
         model = factory()
         fit_model_with_progress(
             model,
@@ -1005,7 +1124,7 @@ def evaluate_teacher(
         )
         scores = -model.predict(x_validation)
         record(
-            candidate=f"normalized_regret_{name}",
+            candidate=candidate_name,
             formulation="normalized_regret",
             model_name=name,
             scores=scores,
@@ -1017,88 +1136,101 @@ def evaluate_teacher(
             },
         )
 
-    print("\n--- Pairwise ranking ---")
-    context_indices, varying_indices = (
-        find_pairwise_feature_partition(
+    pairwise_selected = any(
+        candidate.startswith("pairwise_")
+        for candidate in selected_candidates
+    )
+
+    if pairwise_selected:
+        print("\n--- Pairwise ranking ---")
+            context_indices, varying_indices = (
+            find_pairwise_feature_partition(
+                train,
+                x_train,
+                features,
+            )
+        )
+        print(
+            "Pairwise feature partition: "
+            f"{len(context_indices)} context + "
+            f"{len(varying_indices)} action-varying"
+        )
+
+        pair_x, pair_y, pair_weight = build_pairwise_training(
             train,
             x_train,
-            features,
-        )
-    )
-    print(
-        "Pairwise feature partition: "
-        f"{len(context_indices)} context + "
-        f"{len(varying_indices)} action-varying"
-    )
-
-    pair_x, pair_y, pair_weight = build_pairwise_training(
-        train,
-        x_train,
-        context_indices=context_indices,
-        varying_indices=varying_indices,
-        max_pairs_per_state=max_pairs_per_state,
-    )
-    print(
-        f"Pairwise training rows: {len(pair_x):,} "
-        f"× {pair_x.shape[1]:,} features"
-    )
-    print(
-        f"Pairwise class balance: {float(pair_y.mean()):.1%} positive"
-    )
-
-    pair_specs = [
-        (
-            "histgb",
-            histgb_classifier,
-        ),
-        (
-            "sgd_logistic",
-            pairwise_sgd_classifier,
-        ),
-    ]
-
-    for name, factory in pair_specs:
-        model = factory()
-        fit_model_with_progress(
-            model,
-            pair_x,
-            pair_y,
-            sample_weight=pair_weight,
-            desc=f"Fit pairwise_{name}",
-        )
-        scores = pairwise_scores(
-            validation,
-            x_validation,
-            model=model,
             context_indices=context_indices,
             varying_indices=varying_indices,
+            max_pairs_per_state=max_pairs_per_state,
         )
-        record(
-            candidate=f"pairwise_{name}",
-            formulation="pairwise",
-            model_name=name,
-            scores=scores,
-            bundle={
-                "formulation": "pairwise",
-                "model": model,
-                "imputer": imputer,
-                "features": features,
-                "context_indices": context_indices,
-                "varying_indices": varying_indices,
-                "context_features": [
-                    features[i]
-                    for i in context_indices
-                ],
-                "varying_features": [
-                    features[i]
-                    for i in varying_indices
-                ],
-            },
+        print(
+            f"Pairwise training rows: {len(pair_x):,} "
+            f"× {pair_x.shape[1]:,} features"
         )
+        print(
+            f"Pairwise class balance: {float(pair_y.mean()):.1%} positive"
+        )
+
+        pair_specs = [
+            (
+                "histgb",
+                histgb_classifier,
+            ),
+            (
+                "sgd_logistic",
+                pairwise_sgd_classifier,
+            ),
+        ]
+
+        for name, factory in pair_specs:
+            candidate_name = f"pairwise_{name}"
+            if candidate_name not in selected_candidates:
+                continue
+            model = factory()
+            fit_model_with_progress(
+                model,
+                pair_x,
+                pair_y,
+                sample_weight=pair_weight,
+                desc=f"Fit pairwise_{name}",
+            )
+            scores = pairwise_scores(
+                validation,
+                x_validation,
+                model=model,
+                context_indices=context_indices,
+                varying_indices=varying_indices,
+            )
+            record(
+                candidate=candidate_name,
+                formulation="pairwise",
+                model_name=name,
+                scores=scores,
+                bundle={
+                    "formulation": "pairwise",
+                    "model": model,
+                    "imputer": imputer,
+                    "features": features,
+                    "context_indices": context_indices,
+                    "varying_indices": varying_indices,
+                    "context_features": [
+                        features[i]
+                        for i in context_indices
+                    ],
+                    "varying_features": [
+                        features[i]
+                        for i in varying_indices
+                    ],
+                },
+            )
 
     tournament_bar.close()
 
     leaderboard = pd.DataFrame(leaderboard_rows)
+    leaderboard = leaderboard.drop_duplicates(
+        subset=["candidate"],
+        keep="last",
+    ).reset_index(drop=True)
 
     learned_mask = leaderboard["formulation"].ne("random")
     learned = (
@@ -1355,6 +1487,23 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--only",
+        default=None,
+        choices=[
+            "absolute_q_histgb",
+            "regret_histgb",
+            "regret_extra_trees",
+            "normalized_regret_histgb",
+            "normalized_regret_extra_trees",
+            "pairwise_histgb",
+            "pairwise_sgd_logistic",
+        ],
+        help=(
+            "Run only one candidate and merge it with checkpointed "
+            "partial results when available."
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
     )
@@ -1390,6 +1539,7 @@ def main() -> None:
         root=root,
         n_jobs=args.n_jobs,
         max_pairs_per_state=args.max_pairs_per_state,
+        only=args.only,
     )
 
 
