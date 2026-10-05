@@ -1311,6 +1311,7 @@ def pso_search_cuda(
     progress_offset: int = 0,
     progress_message: str = "",
     gpu_finalists: int = 128,
+    finalist_strategy: str = "top",
     exact_simulate: Callable,
     exact_kwargs: dict,
     target_signature: Callable,
@@ -1598,12 +1599,89 @@ def pso_search_cuda(
                     ),
                 ),
             )
-            finalist_indices = torch.topk(
-                pbest_values,
-                k=finalist_count,
-                largest=True,
-                sorted=True,
-            ).indices
+
+            if finalist_strategy == "top":
+                finalist_indices = torch.topk(
+                    pbest_values,
+                    k=finalist_count,
+                    largest=True,
+                    sorted=True,
+                ).indices
+            elif finalist_strategy == "stratified":
+                # V5 teacher mode: exact-rescore particle bests across the
+                # swarm's quality spectrum instead of only the elite tail.
+                # This preserves the PSO search/trajectory optimum while
+                # creating a much broader action-value supervision pool.
+                sorted_indices = torch.argsort(
+                    pbest_values,
+                    descending=True,
+                    stable=True,
+                )
+                quartile_edges = torch.linspace(
+                    0,
+                    particles,
+                    steps=5,
+                    device=cache.device,
+                ).round().to(
+                    dtype=torch.long
+                )
+
+                base = finalist_count // 4
+                remainder = finalist_count % 4
+                selected_parts = []
+
+                for quartile in range(4):
+                    count = base + (
+                        1
+                        if quartile < remainder
+                        else 0
+                    )
+                    if count <= 0:
+                        continue
+
+                    start = int(
+                        quartile_edges[
+                            quartile
+                        ].item()
+                    )
+                    stop = int(
+                        quartile_edges[
+                            quartile + 1
+                        ].item()
+                    )
+                    width_q = max(
+                        1,
+                        stop - start,
+                    )
+                    count = min(
+                        count,
+                        width_q,
+                    )
+
+                    offsets = torch.linspace(
+                        0,
+                        width_q - 1,
+                        steps=count,
+                        device=cache.device,
+                    ).round().to(
+                        dtype=torch.long
+                    )
+                    selected_parts.append(
+                        sorted_indices[
+                            start + offsets
+                        ]
+                    )
+
+                finalist_indices = torch.cat(
+                    selected_parts,
+                    dim=0,
+                )
+            else:
+                raise ValueError(
+                    "Unknown finalist_strategy: "
+                    f"{finalist_strategy}. "
+                    "Use top or stratified."
+                )
 
             finalist_plans = (
                 pbest[
