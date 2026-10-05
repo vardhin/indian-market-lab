@@ -348,7 +348,7 @@ button { cursor: pointer; }
 .action-list {
   display: grid;
   gap: 5px;
-  max-height: 160px;
+  max-height: 320px;
   overflow: auto;
 }
 .action-row {
