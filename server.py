@@ -309,6 +309,7 @@ async def _run_experiment(run_id: str) -> None:
             "OPENBLAS_NUM_THREADS": "1",
             "MKL_NUM_THREADS": "1",
             "NUMEXPR_NUM_THREADS": "1",
+            "IML_PROGRESS_JSON": "1",
         }
     )
 
@@ -335,6 +336,33 @@ async def _run_experiment(run_id: str) -> None:
                 if not line:
                     break
                 text = line.decode("utf-8", errors="replace")
+
+                if text.startswith(
+                    "IML_PROGRESS "
+                ):
+                    try:
+                        progress_payload = (
+                            json.loads(
+                                text[
+                                    len(
+                                        "IML_PROGRESS "
+                                    ):
+                                ].strip()
+                            )
+                        )
+                        run[
+                            "progress"
+                        ] = progress_payload
+                        _save_run(
+                            run
+                        )
+                    except Exception:
+                        handle.write(
+                            text
+                        )
+                        handle.flush()
+                    continue
+
                 handle.write(text)
                 handle.flush()
 
@@ -342,6 +370,38 @@ async def _run_experiment(run_id: str) -> None:
 
         run["return_code"] = int(code)
         run["status"] = "completed" if code == 0 else "failed"
+        if (
+            code == 0
+            and isinstance(
+                run.get("progress"),
+                dict,
+            )
+        ):
+            run[
+                "progress"
+            ][
+                "completed"
+            ] = run[
+                "progress"
+            ].get(
+                "total",
+                1,
+            )
+            run[
+                "progress"
+            ][
+                "fraction"
+            ] = 1.0
+            run[
+                "progress"
+            ][
+                "percent"
+            ] = 100.0
+            run[
+                "progress"
+            ][
+                "eta_seconds"
+            ] = 0.0
     except asyncio.CancelledError:
         run["status"] = "cancelled"
         raise
@@ -427,6 +487,16 @@ async def start_run(payload: RunRequest) -> dict[str, Any]:
         "finished_at": None,
         "return_code": None,
         "pid": None,
+        "progress": {
+            "phase": payload.experiment_id,
+            "completed": 0,
+            "total": 1,
+            "fraction": 0.0,
+            "percent": 0.0,
+            "eta_seconds": None,
+            "message": "queued",
+            "detail": "",
+        },
     }
     RUNS[run_id] = run
     _save_run(run)
