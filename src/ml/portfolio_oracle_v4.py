@@ -2592,6 +2592,19 @@ def build_oracle(
                 teacher
             )
         ),
+        "teacher_bucket_counts": {
+            str(
+                bucket
+            ): int(
+                count
+            )
+            for bucket, count
+            in teacher[
+                "meta_teacher_bucket"
+            ].value_counts(
+                dropna=False
+            ).items()
+        },
         "feature_columns": int(
             sum(
                 str(column).startswith(
@@ -2625,7 +2638,9 @@ def build_oracle(
     )
 
     print(
-        "\n=== PORTFOLIO ORACLE V4 COMPLETE ==="
+        "\n=== "
+        f"{output_namespace.upper()} "
+        "COMPLETE ==="
     )
     print(
         "Decision states: "
@@ -2697,6 +2712,52 @@ def self_test() -> None:
         )
         == 220
     )
+
+    dummy_samples = [
+        {
+            "fitness": float(
+                96 - index
+            ),
+            "first_target": {
+                f"S{index}": 1.0,
+            },
+        }
+        for index in range(
+            96
+        )
+    ]
+    diversified = select_teacher_samples(
+        dummy_samples,
+        count=32,
+        strategy="quartile",
+    )
+    assert len(
+        diversified
+    ) == 32
+    bucket_counts = {
+        bucket: sum(
+            row[
+                "_teacher_bucket"
+            ]
+            == bucket
+            for row in diversified
+        )
+        for bucket in (
+            "elite",
+            "upper_mid",
+            "lower_mid",
+            "broad",
+        )
+    }
+    assert bucket_counts == {
+        "elite": 8,
+        "upper_mid": 8,
+        "lower_mid": 8,
+        "broad": 8,
+    }
+    assert diversified[0][
+        "_pool_rank"
+    ] == 1
 
     # Identity must never be a predictive feature.
     bad = [
