@@ -15,6 +15,8 @@
   let dashboard = { metrics: {}, decisions: [], equity: [], reports: [] };
   let actionMatrix = { state_date: null, rows: [] };
   let reports = [];
+  let artifactView = null;
+  let artifactLoading = false;
   let years = [2023];
 
   let experimentId = 'portfolio_oracle_v4';
@@ -250,6 +252,20 @@
       );
     } catch (error) {
       console.error(error);
+    }
+  }
+
+  async function loadArtifact(path) {
+    artifactLoading = true;
+    try {
+      artifactView = await api.artifact(
+        path,
+        500
+      );
+    } catch (error) {
+      notify(error.message, 'error');
+    } finally {
+      artifactLoading = false;
     }
   }
 
@@ -1700,26 +1716,89 @@
           </tbody>
         </table>
       {:else if dockTab === 'reports'}
-        <div class="report-grid">
-          {#each reports as report}
-            <div class="report-card">
-              <div class="section-title">
-                {report.kind}
-              </div>
-              <div class="report-path mono">
-                {report.path}
-              </div>
-              <div
-                class="tiny muted"
-                style="margin-top:7px"
-              >
-                {Math.round(
-                  report.size / 1024
-                )} KB
-              </div>
+        {#if artifactView}
+          <div
+            class="panel-header"
+            style="position:sticky;top:0;z-index:3"
+          >
+            <button
+              class="btn"
+              onclick={() =>
+                (artifactView = null)}
+            >
+              ← Back
+            </button>
+            <div class="panel-title">
+              {artifactView.path}
             </div>
-          {/each}
-        </div>
+            <div class="panel-subtitle">
+              {artifactView.kind}
+            </div>
+          </div>
+
+          {#if artifactView.kind === 'table'}
+            <table class="table">
+              <thead>
+                <tr>
+                  {#each artifactView.columns || [] as column}
+                    <th>{column}</th>
+                  {/each}
+                </tr>
+              </thead>
+              <tbody>
+                {#each artifactView.rows || [] as row}
+                  <tr>
+                    {#each artifactView.columns || [] as column}
+                      <td class="mono">
+                        {row[column] == null
+                          ? '—'
+                          : typeof row[column] === 'object'
+                            ? JSON.stringify(row[column])
+                            : String(row[column])}
+                      </td>
+                    {/each}
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {:else}
+            <pre class="log-view">{artifactView.kind === 'json'
+              ? JSON.stringify(artifactView.data, null, 2)
+              : artifactView.data || ''}</pre>
+          {/if}
+        {:else if artifactLoading}
+          <div class="empty">
+            Loading artifact…
+          </div>
+        {:else}
+          <div class="report-grid">
+            {#each reports as report}
+              <button
+                class="report-card"
+                style="text-align:left;color:inherit;cursor:pointer"
+                onclick={() =>
+                  loadArtifact(
+                    report.path
+                  )}
+              >
+                <div class="section-title">
+                  {report.kind}
+                </div>
+                <div class="report-path mono">
+                  {report.path}
+                </div>
+                <div
+                  class="tiny muted"
+                  style="margin-top:7px"
+                >
+                  {Math.round(
+                    report.size / 1024
+                  )} KB
+                </div>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/if}
     </div>
   </section>
