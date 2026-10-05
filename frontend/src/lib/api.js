@@ -26,11 +26,15 @@ export const api = {
   logs: (id, after = 0) => request(`/api/runs/${id}/logs?after=${after}`),
   startRun: (experiment_id, config, name = null) =>
     request('/api/runs', { method: 'POST', body: JSON.stringify({ experiment_id, config, name }) }),
+  startCustom: (script, args = [], name = null) =>
+    request('/api/runs/custom', { method: 'POST', body: JSON.stringify({ script, args, name }) }),
   stopRun: (id) => request(`/api/runs/${id}/stop`, { method: 'POST' }),
   marketYears: () => request('/api/market/years'),
   symbols: (year, query = '') => request(`/api/market/symbols?year=${year}&query=${encodeURIComponent(query)}`),
-  candles: (symbol, year, interval) =>
-    request(`/api/market/candles?symbol=${encodeURIComponent(symbol)}&year=${year}&interval=${interval}`),
+  candles: (symbol, year, interval, endDate = null) => {
+    const end = endDate ? `&end_date=${encodeURIComponent(endDate)}` : '';
+    return request(`/api/market/candles?symbol=${encodeURIComponent(symbol)}&year=${year}&interval=${interval}${end}`);
+  },
   dashboard: (year = 2023) => request(`/api/dashboard?year=${year}`),
   reports: () => request('/api/reports'),
   artifact: (path, limit = 1000) => request(`/api/artifact?path=${encodeURIComponent(path)}&limit=${limit}`),
