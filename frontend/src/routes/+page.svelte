@@ -217,6 +217,8 @@
   let downColor = '#ff5d6c';
   let gridColor = '#1c2330';
   let background = '#0b0f15';
+  let chartTextColor = '#8f9bb0';
+  let chartBorderColor = '#242b38';
   let showVolume = true;
   let showGrid = true;
   let candleStatus = 'idle';
@@ -304,6 +306,27 @@
       theme.chart.up;
     downColor =
       theme.chart.down;
+
+    if (typeof document !== 'undefined') {
+      const computed =
+        getComputedStyle(
+          document.documentElement
+        );
+      chartTextColor =
+        computed
+          .getPropertyValue(
+            '--muted'
+          )
+          .trim()
+        || chartTextColor;
+      chartBorderColor =
+        computed
+          .getPropertyValue(
+            '--line'
+          )
+          .trim()
+        || chartBorderColor;
+    }
 
     if (
       persist
@@ -1854,6 +1877,8 @@
         {downColor}
         {gridColor}
         {background}
+        textColor={chartTextColor}
+        borderColor={chartBorderColor}
         {showVolume}
         {showGrid}
         {markers}
