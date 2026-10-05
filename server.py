@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent
 RUN_ROOT = ROOT / "reports" / "ui_runs"
 RUN_ROOT.mkdir(parents=True, exist_ok=True)
 PANEL_ROOT = ROOT / "data" / "processed" / "largecap_model_panel_v2"
+PRICE_ROOT = ROOT / "data" / "processed" / "equities_adjusted"
 
 BACKTEST_DIR = ROOT / "src" / "backtest"
 ML_DIR = ROOT / "src" / "ml"
@@ -347,7 +348,7 @@ def experiments() -> list[dict[str, Any]]:
 @app.get("/api/scripts")
 def scripts() -> list[str]:
     return sorted(
-        str(path.relative_to(ROOT))
+        path.name
         for path in (ROOT / "src" / "ml").glob("*.py")
         if not path.name.startswith("_")
     )
@@ -700,6 +701,125 @@ def _year_frame(year: int) -> pd.DataFrame:
     )
 
 
+@lru_cache(maxsize=8)
+def _price_year_frame(
+    year: int,
+) -> tuple[pd.DataFrame, str]:
+    """
+    Prefer the mechanically adjusted OHLCV layer because it preserves the
+    official raw NSE high/low columns as well as adjusted columns. Fall back to
+    the model panel only for line-style price viewing.
+    """
+    if PRICE_ROOT.exists():
+        paths: list[Path] = []
+        for path in sorted(
+            PRICE_ROOT.glob("date=*/data.parquet")
+        ):
+            try:
+                date = pd.Timestamp(
+                    path.parent.name.removeprefix(
+                        "date="
+                    )
+                )
+            except Exception:
+                continue
+            if date.year == year:
+                paths.append(path)
+
+        if paths:
+            schema = pq.read_schema(
+                paths[0]
+            )
+            available = set(
+                schema.names
+            )
+            columns = [
+                column
+                for column in [
+                    "date",
+                    "canonical_security_id",
+                    "symbol",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ]
+                if column in available
+            ]
+            required = {
+                "date",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+            }
+            if required.issubset(
+                set(columns)
+            ):
+                frame = pd.concat(
+                    [
+                        pd.read_parquet(
+                            path,
+                            columns=columns,
+                        )
+                        for path in paths
+                    ],
+                    ignore_index=True,
+                )
+                frame["date"] = pd.to_datetime(
+                    frame["date"],
+                    errors="coerce",
+                ).dt.normalize()
+                frame["symbol"] = (
+                    frame["symbol"]
+                    .astype("string")
+                    .str.strip()
+                )
+                for column in [
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ]:
+                    if column in frame.columns:
+                        frame[column] = (
+                            pd.to_numeric(
+                                frame[column],
+                                errors="coerce",
+                            )
+                        )
+                if "volume" not in frame.columns:
+                    frame["volume"] = np.nan
+                return (
+                    frame.sort_values(
+                        ["date", "symbol"],
+                        kind="stable",
+                    ).reset_index(
+                        drop=True
+                    ),
+                    "true_ohlc",
+                )
+
+    # Fallback deliberately does not invent candle wicks.
+    model = _year_frame(
+        year
+    )[
+        [
+            "date",
+            "symbol",
+            "open",
+            "close",
+            "volume",
+        ]
+    ].copy()
+    model["high"] = np.nan
+    model["low"] = np.nan
+    return model, "open_close_only"
+
+
 def _resample_candles(
     frame: pd.DataFrame,
     interval: str,
@@ -811,9 +931,12 @@ def market_candles(
     symbol: str,
     year: int = 2023,
     interval: str = "1D",
+    end_date: str | None = None,
 ) -> dict[str, Any]:
     try:
-        frame = _year_frame(year)
+        frame, ohlc_quality = _price_year_frame(
+            year
+        )
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
@@ -837,6 +960,16 @@ def market_candles(
         subset=["open", "close"]
     )
 
+    if end_date:
+        cutoff = pd.Timestamp(
+            end_date
+        ).normalize()
+        subset = subset.loc[
+            subset["date"].le(
+                cutoff
+            )
+        ]
+
     if subset.empty:
         raise HTTPException(
             status_code=404,
@@ -844,6 +977,15 @@ def market_candles(
                 f"No candles for {symbol} in {year}"
             ),
         )
+
+    if (
+        ohlc_quality
+        != "true_ohlc"
+        and interval != "1D"
+    ):
+        # Resampling open/close-only data is still legitimate for a line/area
+        # chart, but it is not a real candlestick series.
+        pass
 
     subset = _resample_candles(
         subset,
@@ -855,8 +997,16 @@ def market_candles(
                 row.date
             ).strftime("%Y-%m-%d"),
             "open": float(row.open),
-            "high": float(row.high),
-            "low": float(row.low),
+            "high": (
+                None
+                if pd.isna(row.high)
+                else float(row.high)
+            ),
+            "low": (
+                None
+                if pd.isna(row.low)
+                else float(row.low)
+            ),
             "close": float(row.close),
             "volume": (
                 None
@@ -879,6 +1029,9 @@ def market_candles(
             "1M",
             "3M",
         ],
+        "ohlc_quality": (
+            ohlc_quality
+        ),
         "candles": candles,
     }
 
@@ -1594,9 +1747,44 @@ def game_action(
             ),
             1.0,
         )
+        signal_frame = _year_frame(
+            game["year"]
+        )
+        signal_date = pd.Timestamp(
+            game["dates"][
+                game["position"]
+            ]
+        )
+        signal_day = signal_frame.loc[
+            signal_frame["date"].eq(
+                signal_date
+            )
+        ]
+        close_map = (
+            signal_day.set_index(
+                "symbol"
+            )["close"].to_dict()
+        )
+        equity_before = float(
+            game["cash"]
+            + sum(
+                float(quantity)
+                * float(
+                    close_map.get(
+                        held_symbol,
+                        game["last_prices"].get(
+                            held_symbol,
+                            0.0,
+                        ),
+                    )
+                )
+                for held_symbol, quantity
+                in game["holdings"].items()
+            )
+        )
         budget = min(
             game["cash"],
-            game["initial_capital"]
+            equity_before
             * target_weight,
         )
 
@@ -1645,57 +1833,79 @@ def game_action(
             quantity
         )
 
-    if kind == "BUY":
-        if not action.symbol:
-            raise HTTPException(
-                status_code=400,
-                detail="BUY requires symbol",
+    cash_before = float(
+        game["cash"]
+    )
+    holdings_before = dict(
+        game["holdings"]
+    )
+    fees_state_before = float(
+        game["fees"]
+    )
+
+    try:
+        if kind == "BUY":
+            if not action.symbol:
+                raise HTTPException(
+                    status_code=400,
+                    detail="BUY requires symbol",
+                )
+            buy_symbol(
+                action.symbol,
+                action.weight,
             )
-        buy_symbol(
-            action.symbol,
-            action.weight,
-        )
-    elif kind == "SELL":
-        if not action.symbol:
-            raise HTTPException(
-                status_code=400,
-                detail="SELL requires symbol",
-            )
-        sell_symbol(
-            action.symbol
-        )
-    elif kind == "SWITCH":
-        if (
-            not action.from_symbol
-            or not action.to_symbol
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "SWITCH requires from_symbol "
-                    "and to_symbol"
-                ),
-            )
-        sell_symbol(
-            action.from_symbol
-        )
-        buy_symbol(
-            action.to_symbol,
-            action.weight,
-        )
-    elif kind == "LIQUIDATE":
-        for symbol in list(
-            game["holdings"]
-        ):
+        elif kind == "SELL":
+            if not action.symbol:
+                raise HTTPException(
+                    status_code=400,
+                    detail="SELL requires symbol",
+                )
             sell_symbol(
-                symbol
+                action.symbol
             )
-        game["finished"] = True
-    elif kind != "HOLD":
-        raise HTTPException(
-            status_code=400,
-            detail="Unknown game action",
+        elif kind == "SWITCH":
+            if (
+                not action.from_symbol
+                or not action.to_symbol
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "SWITCH requires from_symbol "
+                        "and to_symbol"
+                    ),
+                )
+            sell_symbol(
+                action.from_symbol
+            )
+            buy_symbol(
+                action.to_symbol,
+                action.weight,
+            )
+        elif kind == "LIQUIDATE":
+            for symbol in list(
+                game["holdings"]
+            ):
+                sell_symbol(
+                    symbol
+                )
+            game["finished"] = True
+        elif kind != "HOLD":
+            raise HTTPException(
+                status_code=400,
+                detail="Unknown game action",
+            )
+    except HTTPException:
+        game["cash"] = (
+            cash_before
         )
+        game["holdings"] = (
+            holdings_before
+        )
+        game["fees"] = (
+            fees_state_before
+        )
+        raise
 
     game["history"].append(
         {
