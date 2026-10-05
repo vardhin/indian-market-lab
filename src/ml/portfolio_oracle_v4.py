@@ -1799,20 +1799,6 @@ def checkpoint_config(
         "drawdown_penalty": float(
             drawdown_penalty
         ),
-        "checkpoint_dir": (
-            str(
-                checkpoint_dir
-            )
-            if checkpoint_dir
-            is not None
-            else None
-        ),
-        "checkpoint_every": int(
-            checkpoint_every
-        ),
-        "resumed": bool(
-            resume
-        ),
         "engine": str(
             engine
         ),
@@ -3157,6 +3143,20 @@ def build_oracle(
         ),
         "output_namespace": str(
             output_namespace
+        ),
+        "checkpoint_dir": (
+            str(
+                checkpoint_dir
+            )
+            if checkpoint_dir
+            is not None
+            else None
+        ),
+        "checkpoint_every": int(
+            checkpoint_every
+        ),
+        "resumed": bool(
+            resume
         ),
         "engine": str(
             engine
