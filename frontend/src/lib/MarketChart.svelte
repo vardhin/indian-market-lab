@@ -12,6 +12,7 @@
     showVolume = true,
     showGrid = true,
     height = 520,
+    fill = false,
     markers = []
   } = $props();
 
@@ -105,10 +106,17 @@
   }
 
   onMount(() => {
+    const initialHeight = fill
+      ? Math.max(
+          160,
+          container.clientHeight
+        )
+      : height;
+
     chart = createChart(container, {
       width: container.clientWidth,
-      height,
-      autoSize: true,
+      height: initialHeight,
+      autoSize: false,
       layout: {
         background: { type: ColorType.Solid, color: background },
         textColor: '#8f9bb0',
@@ -131,7 +139,19 @@
 
     buildSeries();
     resizeObserver = new ResizeObserver(() => {
-      chart?.applyOptions({ width: container.clientWidth });
+      if (!chart || !container) return;
+      chart.resize(
+        Math.max(
+          1,
+          container.clientWidth
+        ),
+        Math.max(
+          160,
+          fill
+            ? container.clientHeight
+            : height
+        )
+      );
     });
     resizeObserver.observe(container);
 
@@ -162,5 +182,7 @@
 <div
   class="market-chart"
   bind:this={container}
-  style={`height:${height}px`}
+  style={fill
+    ? 'height:100%;min-height:0'
+    : `height:${height}px`}
 ></div>
