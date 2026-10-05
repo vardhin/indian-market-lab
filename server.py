@@ -1274,12 +1274,65 @@ def _report_files() -> list[dict[str, Any]]:
         return []
 
     rows: list[dict[str, Any]] = []
-    for pattern, kind in [
-        ("**/summary.json", "summary"),
-        ("**/metrics.json", "metrics"),
-        ("**/leaderboard.csv", "leaderboard"),
-    ]:
-        for path in report_root.glob(pattern):
+    for suffix in (
+        ".json",
+        ".csv",
+        ".parquet",
+    ):
+        for path in report_root.glob(
+            f"**/*{suffix}"
+        ):
+            stem = path.stem.lower()
+            if (
+                "leaderboard"
+                in stem
+            ):
+                kind = "leaderboard"
+            elif (
+                stem
+                in {
+                    "summary",
+                    "metrics",
+                }
+                or stem.endswith(
+                    "_summary"
+                )
+            ):
+                kind = (
+                    "summary"
+                    if "summary"
+                    in stem
+                    else "metrics"
+                )
+            elif (
+                "diagnostic"
+                in stem
+            ):
+                kind = "diagnostics"
+            elif (
+                "prediction"
+                in stem
+                or "state_value"
+                in stem
+            ):
+                kind = "predictions"
+            elif (
+                "trade"
+                in stem
+            ):
+                kind = "trades"
+            elif (
+                "equity"
+                in stem
+            ):
+                kind = "equity"
+            else:
+                kind = (
+                    suffix.lstrip(
+                        "."
+                    )
+                )
+
             rows.append(
                 {
                     "path": str(
