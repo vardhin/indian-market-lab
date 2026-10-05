@@ -1036,6 +1036,238 @@ def market_candles(
     }
 
 
+@app.get("/api/action-matrix")
+def action_matrix(
+    date: str | None = None,
+    model: str | None = None,
+    limit: int = Query(
+        250,
+        ge=1,
+        le=5000,
+    ),
+) -> dict[str, Any]:
+    path = (
+        ROOT
+        / "reports"
+        / "ml"
+        / "portfolio_student_v4"
+        / "development"
+        / "action_value_predictions.parquet"
+    )
+    if not path.is_file():
+        return {
+            "state_date": None,
+            "rows": [],
+        }
+
+    frame = pd.read_parquet(
+        path
+    )
+    frame["state_date"] = (
+        pd.to_datetime(
+            frame["state_date"],
+            errors="coerce",
+        ).dt.normalize()
+    )
+
+    if model:
+        frame = frame.loc[
+            frame["model"].eq(
+                model
+            )
+        ]
+
+    if date:
+        state_date = pd.Timestamp(
+            date
+        ).normalize()
+    else:
+        state_date = frame[
+            "state_date"
+        ].max()
+
+    frame = frame.loc[
+        frame["state_date"].eq(
+            state_date
+        )
+    ].copy()
+
+    if frame.empty:
+        return {
+            "state_date": (
+                None
+                if pd.isna(
+                    state_date
+                )
+                else pd.Timestamp(
+                    state_date
+                ).strftime(
+                    "%Y-%m-%d"
+                )
+            ),
+            "rows": [],
+        }
+
+    frame["regret"] = (
+        frame.groupby(
+            [
+                "state_key",
+                "model",
+            ],
+            sort=False,
+        )["oracle_q"]
+        .transform("max")
+        - frame["oracle_q"]
+    )
+    frame = (
+        frame.sort_values(
+            [
+                "predicted_q",
+                "oracle_q",
+            ],
+            ascending=[
+                False,
+                False,
+            ],
+            kind="stable",
+        )
+        .head(limit)
+    )
+
+    symbol_map: dict[
+        str,
+        str,
+    ] = {}
+    try:
+        market = _year_frame(
+            int(
+                pd.Timestamp(
+                    state_date
+                ).year
+            )
+        )
+        day = market.loc[
+            market["date"].eq(
+                state_date
+            ),
+            [
+                "canonical_security_id",
+                "symbol",
+            ],
+        ].drop_duplicates()
+        symbol_map = dict(
+            zip(
+                day[
+                    "canonical_security_id"
+                ].astype(str),
+                day[
+                    "symbol"
+                ].astype(str),
+            )
+        )
+    except Exception:
+        symbol_map = {}
+
+    rows = []
+    for row in frame.to_dict(
+        orient="records"
+    ):
+        target = []
+        try:
+            encoded = json.loads(
+                str(
+                    row.get(
+                        "meta_target_signature",
+                        "[]",
+                    )
+                )
+            )
+            for cid, weight in encoded:
+                target.append(
+                    {
+                        "asset": (
+                            symbol_map.get(
+                                str(cid),
+                                str(cid),
+                            )
+                        ),
+                        "weight": float(
+                            weight
+                        ),
+                    }
+                )
+        except Exception:
+            target = []
+
+        rows.append({
+            "state_key": row.get(
+                "state_key"
+            ),
+            "state_date": pd.Timestamp(
+                row[
+                    "state_date"
+                ]
+            ).strftime(
+                "%Y-%m-%d"
+            ),
+            "model": row.get(
+                "model"
+            ),
+            "oracle_rank": int(
+                row.get(
+                    "action_rank",
+                    0,
+                )
+            ),
+            "is_oracle_action": bool(
+                row.get(
+                    "is_oracle_action",
+                    False,
+                )
+            ),
+            "predicted_q": float(
+                row[
+                    "predicted_q"
+                ]
+            ),
+            "oracle_q": float(
+                row[
+                    "oracle_q"
+                ]
+            ),
+            "regret": float(
+                row[
+                    "regret"
+                ]
+            ),
+            "oracle_terminal_return": float(
+                row[
+                    "oracle_terminal_return"
+                ]
+            ),
+            "oracle_max_drawdown": float(
+                row[
+                    "oracle_max_drawdown"
+                ]
+            ),
+            "oracle_turnover": float(
+                row[
+                    "oracle_turnover"
+                ]
+            ),
+            "target": target,
+        })
+
+    return {
+        "state_date": pd.Timestamp(
+            state_date
+        ).strftime(
+            "%Y-%m-%d"
+        ),
+        "rows": rows,
+    }
+
+
 def _report_files() -> list[dict[str, Any]]:
     report_root = ROOT / "reports" / "ml"
     if not report_root.exists():
