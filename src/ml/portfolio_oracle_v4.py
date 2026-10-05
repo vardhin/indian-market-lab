@@ -5,6 +5,7 @@ import copy
 import json
 import math
 import sys
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -3394,6 +3395,92 @@ def self_test() -> None:
     assert diversified[0][
         "_pool_rank"
     ] == 1
+
+    with tempfile.TemporaryDirectory() as tmp:
+        checkpoint_root = Path(
+            tmp
+        )
+        config = {
+            "test": True,
+        }
+        teacher_buffer = [
+            {
+                "state_key": "2021-01-01",
+                "oracle_q": 0.1,
+            }
+        ]
+        trajectory_buffer = [
+            {
+                "date": "2021-01-01",
+                "oracle_q": 0.1,
+            }
+        ]
+        (
+            next_sequence,
+            teacher_total,
+            trajectory_total,
+        ) = save_oracle_checkpoint(
+            checkpoint_root,
+            sequence=0,
+            teacher_rows=teacher_buffer,
+            trajectory_rows=trajectory_buffer,
+            year=2021,
+            next_position=1,
+            state={
+                "cash": 123.0,
+                "fees": 4.0,
+                "holdings": {
+                    "A": 2.0,
+                },
+            },
+            processed_days=1,
+            teacher_rows_total=0,
+            trajectory_rows_total=0,
+            config=config,
+        )
+        assert next_sequence == 1
+        assert teacher_total == 1
+        assert trajectory_total == 1
+        assert not teacher_buffer
+        assert not trajectory_buffer
+
+        payload = load_oracle_checkpoint(
+            checkpoint_root,
+            expected_config=config,
+        )
+        assert payload[
+            "processed_days"
+        ] == 1
+        assert payload[
+            "resume_year"
+        ] == 2021
+        assert payload[
+            "resume_position"
+        ] == 1
+        assert payload[
+            "state"
+        ][
+            "holdings"
+        ][
+            "A"
+        ] == 2.0
+
+        teacher_roundtrip = load_checkpoint_table(
+            checkpoint_root,
+            prefix="teacher",
+            next_sequence=1,
+        )
+        trajectory_roundtrip = load_checkpoint_table(
+            checkpoint_root,
+            prefix="trajectory",
+            next_sequence=1,
+        )
+        assert len(
+            teacher_roundtrip
+        ) == 1
+        assert len(
+            trajectory_roundtrip
+        ) == 1
 
     # Identity must never be a predictive feature.
     bad = [
