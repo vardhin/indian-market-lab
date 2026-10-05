@@ -1703,7 +1703,7 @@ def build_oracle(
 
             print(
                 "CUDA oracle engine: "
-                f"{torch.cuda.get_device_name(torch.device(device))}",
+                f"{torch.cuda.get_device_name(0)}",
                 flush=True,
             )
         except Exception:
