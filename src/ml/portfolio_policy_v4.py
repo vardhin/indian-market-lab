@@ -372,15 +372,48 @@ def performance_metrics(
             252.0
         )
     )
-    sharpe = (
-        (
-            annual_return
-            - float(
-                annual_risk_free_rate
-            )
+    excess_return = (
+        annual_return
+        - float(
+            annual_risk_free_rate
         )
+    )
+    sharpe = (
+        excess_return
         / annual_vol
         if annual_vol > 0
+        else np.nan
+    )
+
+    downside = daily.loc[
+        daily.lt(
+            0.0
+        )
+    ]
+    downside_vol = (
+        float(
+            downside.std(
+                ddof=1
+            )
+            * math.sqrt(
+                252.0
+            )
+        )
+        if len(
+            downside
+        )
+        > 1
+        else np.nan
+    )
+    sortino = (
+        excess_return
+        / downside_vol
+        if (
+            math.isfinite(
+                downside_vol
+            )
+            and downside_vol > 0
+        )
         else np.nan
     )
 
@@ -391,6 +424,22 @@ def performance_metrics(
         values
         / peaks
         - 1.0
+    )
+
+    max_drawdown = float(
+        np.min(
+            drawdowns
+        )
+    )
+    calmar = (
+        float(
+            cagr
+            / abs(
+                max_drawdown
+            )
+        )
+        if max_drawdown < 0
+        else np.nan
     )
 
     return {
@@ -426,10 +475,14 @@ def performance_metrics(
         "sharpe": float(
             sharpe
         ),
-        "max_drawdown": float(
-            np.min(
-                drawdowns
-            )
+        "sortino": float(
+            sortino
+        ),
+        "max_drawdown": (
+            max_drawdown
+        ),
+        "calmar": float(
+            calmar
         ),
     }
 
@@ -498,11 +551,13 @@ def run_policy(
         "cash": float(
             initial_capital
         ),
+        "fees": 0.0,
         "holdings": {},
     }
 
     equity_rows = []
     decision_rows = []
+    total_turnover = 0.0
 
     first_index = int(
         market_indices[
@@ -648,6 +703,11 @@ def run_policy(
         state = executed[
             0
         ]
+        total_turnover += float(
+            executed[
+                1
+            ]
+        )
 
         close_lookup = day_lookup(
             execution_day
@@ -749,6 +809,27 @@ def run_policy(
         equity[
             "holdings"
         ].mean()
+    )
+    metrics[
+        "total_fees"
+    ] = float(
+        state.get(
+            "fees",
+            0.0,
+        )
+    )
+    metrics[
+        "turnover_value"
+    ] = float(
+        total_turnover
+    )
+    metrics[
+        "turnover_multiple"
+    ] = float(
+        total_turnover
+        / initial_capital
+        if initial_capital > 0
+        else np.nan
     )
 
     output_root = (
