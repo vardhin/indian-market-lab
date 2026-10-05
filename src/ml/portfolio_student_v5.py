@@ -655,7 +655,7 @@ def evaluate_teacher(
     print(f"Validation actions:{len(validation):,}")
     print(f"Predictors:        {len(features):,}")
 
-    imputer = SimpleImputer(strategy="median")
+    imputer = SimpleImputer(\n        strategy="median",\n        keep_empty_features=True,\n    )
     x_train = imputer.fit_transform(
         train[features]
     ).astype(np.float32, copy=False)
