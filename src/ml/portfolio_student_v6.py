@@ -1872,11 +1872,18 @@ def evaluate(
         model_root
         / "development_best.joblib"
     )
-    joblib.dump(
-        best_bundle,
-        best_model_path,
-        compress=3,
-    )
+    try:
+        joblib.dump(
+            best_bundle,
+            best_model_path,
+            compress=3,
+        )
+    except Exception as exc:
+        print(
+            "\nWARNING: final best-model serialization failed, "
+            "but all leaderboard/state results are preserved: "
+            f"{exc}"
+        )
 
     summary = {
         "teacher": (
