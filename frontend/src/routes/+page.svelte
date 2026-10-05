@@ -8,6 +8,9 @@
   let dockTab = 'runs';
   let health = null;
   let experiments = [];
+  let scripts = [];
+  let customScript = '';
+  let customArgs = '';
   let runs = [];
   let dashboard = { metrics: {}, decisions: [], equity: [], reports: [] };
   let reports = [];
@@ -34,6 +37,7 @@
   let showVolume = true;
   let showGrid = true;
   let candleStatus = 'idle';
+  let ohlcQuality = 'unknown';
   let timelineIndex = 0;
 
   let game = null;
@@ -94,8 +98,25 @@
 
   function chooseExperiment(id) {
     experimentId = id;
+    if (id === '__custom__') {
+      if (!customScript && scripts.length) {
+        customScript = scripts[0];
+      }
+      config = {};
+      return;
+    }
     const exp = experiments.find((item) => item.id === id);
     config = defaultsFor(exp);
+  }
+
+  function parseCustomArgs(text) {
+    return (text.match(/(?:[^\\s"]+|"[^"]*")+/g) || [])
+      .map((part) => part.replace(/^"|"$/g, ''));
+  }
+
+  async function setMode(nextMode) {
+    mode = nextMode;
+    await loadCandles();
   }
 
   function normalizeConfig() {
@@ -129,10 +150,15 @@
 
   async function launchExperiment() {
     try {
-      const run = await api.startRun(
-        experimentId,
-        normalizeConfig()
-      );
+      const run = experimentId === '__custom__'
+        ? await api.startCustom(
+            customScript,
+            parseCustomArgs(customArgs)
+          )
+        : await api.startRun(
+            experimentId,
+            normalizeConfig()
+          );
       selectedRunId = run.id;
       dockTab = 'logs';
       logLines = [];
@@ -218,9 +244,19 @@
       const payload = await api.candles(
         symbol,
         year,
-        interval
+        interval,
+        mode === 'game' && game
+          ? game.date
+          : null
       );
       candles = payload.candles;
+      ohlcQuality = payload.ohlc_quality || 'unknown';
+      if (
+        ohlcQuality !== 'true_ohlc'
+        && chartType === 'candles'
+      ) {
+        chartType = 'line';
+      }
       candleStatus = `${candles.length} bars`;
     } catch (error) {
       candleStatus = 'error';
@@ -363,6 +399,7 @@
         (game.history?.length || 1) - 1
       );
       await refreshGameMarket();
+      await loadCandles();
 
       if (type === 'LIQUIDATE') {
         notify(
@@ -396,10 +433,11 @@
 
   onMount(async () => {
     try {
-      [health, experiments, years] =
+      [health, experiments, scripts, years] =
         await Promise.all([
           api.health(),
           api.experiments(),
+          api.scripts(),
           api.marketYears()
         ]);
 
@@ -494,7 +532,7 @@
         class:active={mode === 'research'}
         class="mode-tab"
         onclick={() =>
-          (mode = 'research')}
+          setMode('research')}
       >
         Research
       </button>
@@ -502,7 +540,7 @@
         class:active={mode === 'game'}
         class="mode-tab"
         onclick={() =>
-          (mode = 'game')}
+          setMode('game')}
       >
         Human Game
       </button>
@@ -551,10 +589,15 @@
                     {exp.group} · {exp.label}
                   </option>
                 {/each}
+                <option value="__custom__">
+                  Advanced · any src/ml script
+                </option>
               </select>
             </div>
             <div class="tiny muted">
-              {selectedExperiment?.description || ''}
+              {experimentId === '__custom__'
+                ? 'Launch any Python experiment under src/ml without a shell.'
+                : selectedExperiment?.description || ''}
             </div>
           </div>
 
@@ -563,53 +606,79 @@
               Configuration
             </div>
 
-            {#each selectedExperiment?.params || [] as p}
+            {#if experimentId === '__custom__'}
               <div class="control">
-                <label>
-                  {p.label || p.name}
-                </label>
-
-                {#if p.choices && p.type !== 'str_list'}
-                  <select
-                    class="select"
-                    bind:value={config[p.name]}
-                  >
-                    {#each p.choices as choice}
-                      <option value={choice}>
-                        {choice}
-                      </option>
-                    {/each}
-                  </select>
-                {:else}
-                  <input
-                    class="input"
-                    type={
-                      p.type === 'int'
-                      || p.type === 'float'
-                      || p.type === 'optional_int'
-                        ? 'number'
-                        : 'text'
-                    }
-                    min={p.min ?? undefined}
-                    max={p.max ?? undefined}
-                    step={p.type === 'float'
-                      ? 'any'
-                      : undefined}
-                    bind:value={config[p.name]}
-                    placeholder={p.type.endsWith('_list')
-                      ? 'comma separated'
-                      : ''}
-                  />
-                {/if}
+                <label>Python script</label>
+                <select
+                  class="select"
+                  bind:value={customScript}
+                >
+                  {#each scripts as script}
+                    <option value={script}>
+                      {script}
+                    </option>
+                  {/each}
+                </select>
               </div>
-            {/each}
+              <div class="control">
+                <label>CLI arguments</label>
+                <textarea
+                  class="textarea mono"
+                  bind:value={customArgs}
+                  placeholder='--year 2023 --capital 50000'
+                ></textarea>
+              </div>
+            {:else}
+              {#each selectedExperiment?.params || [] as p}
+                <div class="control">
+                  <label>
+                    {p.label || p.name}
+                  </label>
+
+                  {#if p.choices && p.type !== 'str_list'}
+                    <select
+                      class="select"
+                      bind:value={config[p.name]}
+                    >
+                      {#each p.choices as choice}
+                        <option value={choice}>
+                          {choice}
+                        </option>
+                      {/each}
+                    </select>
+                  {:else}
+                    <input
+                      class="input"
+                      type={
+                        p.type === 'int'
+                        || p.type === 'float'
+                        || p.type === 'optional_int'
+                          ? 'number'
+                          : 'text'
+                      }
+                      min={p.min ?? undefined}
+                      max={p.max ?? undefined}
+                      step={p.type === 'float'
+                        ? 'any'
+                        : undefined}
+                      bind:value={config[p.name]}
+                      placeholder={p.type.endsWith('_list')
+                        ? 'comma separated'
+                        : ''}
+                    />
+                  {/if}
+                </div>
+              {/each}
+            {/if}
 
             <button
               class="btn btn-primary"
               style="width:100%"
               onclick={launchExperiment}
             >
-              Run experiment
+              {experimentId === '__custom__'
+                ? 'Run script'
+                : 'Run experiment'}
             </button>
           </div>
 
@@ -928,7 +997,10 @@
           class="select toolbar-select"
           bind:value={chartType}
         >
-          <option value="candles">
+          <option
+            value="candles"
+            disabled={ohlcQuality !== 'true_ohlc'}
+          >
             Candles
           </option>
           <option value="line">
@@ -1046,7 +1118,9 @@
         {/if}
 
         <span style="margin-left:auto">
-          Daily source data; longer intervals are server-side OHLC resamples.
+          {ohlcQuality === 'true_ohlc'
+            ? 'True NSE OHLCV; longer intervals are server-side OHLC resamples.'
+            : 'Open/close-only fallback: line/area mode only.'}
         </span>
       </div>
     </section>
