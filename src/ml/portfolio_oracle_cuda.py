@@ -264,21 +264,24 @@ def _decode_targets(
         ]
 
         if chosen:
-            duplicate = torch.zeros(
-                particles,
-                dtype=torch.bool,
-                device=step_vector.device,
-            )
-            for previous in chosen:
-                duplicate |= (
-                    candidate
-                    == previous
-                )
-
-            attempts = 0
-            while bool(
-                duplicate.any().item()
+            # Resolve duplicate selectors without any host-device
+            # synchronization. With <slot> previously selected assets,
+            # at most <slot> cyclic increments are required to find an
+            # unused candidate because candidates are unique.
+            for _ in range(
+                slot
             ):
+                duplicate = torch.zeros(
+                    particles,
+                    dtype=torch.bool,
+                    device=step_vector.device,
+                )
+                for previous in chosen:
+                    duplicate |= (
+                        candidate
+                        == previous
+                    )
+
                 positions = torch.where(
                     duplicate,
                     (
@@ -291,24 +294,6 @@ def _decode_targets(
                 candidate = candidates[
                     positions
                 ]
-
-                duplicate = torch.zeros(
-                    particles,
-                    dtype=torch.bool,
-                    device=step_vector.device,
-                )
-                for previous in chosen:
-                    duplicate |= (
-                        candidate
-                        == previous
-                    )
-
-                attempts += 1
-                if attempts > active_slots:
-                    raise RuntimeError(
-                        "CUDA target decoder could not resolve "
-                        "a duplicate candidate."
-                    )
 
         chosen.append(
             candidate
@@ -1355,7 +1340,7 @@ def pso_search_cuda(
     ] = {}
     global_best = None
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for restart in range(
             restarts
         ):
@@ -1429,7 +1414,12 @@ def pso_search_cuda(
             gbest = positions[
                 0
             ].clone()
-            gbest_value = -1e18
+            gbest_value = torch.full(
+                (),
+                -1e18,
+                dtype=cache.dtype,
+                device=cache.device,
+            )
 
             for iteration in range(
                 iterations
@@ -1476,21 +1466,26 @@ def pso_search_cuda(
                     values,
                     dim=0,
                 )
-                iteration_best_float = float(
-                    iteration_best_value.item()
-                )
-                if (
-                    iteration_best_float
+
+                # Keep global-best selection entirely on-device. The old
+                # implementation called .item() here every iteration,
+                # introducing an unnecessary CUDA synchronization.
+                better = (
+                    iteration_best_value
                     > gbest_value
-                ):
-                    gbest_value = (
-                        iteration_best_float
-                    )
-                    gbest = positions[
-                        int(
-                            iteration_best_index.item()
-                        )
-                    ].clone()
+                )
+                candidate_gbest = positions[
+                    iteration_best_index
+                ]
+                gbest = torch.where(
+                    better,
+                    candidate_gbest,
+                    gbest,
+                )
+                gbest_value = torch.maximum(
+                    gbest_value,
+                    iteration_best_value,
+                )
 
                 r1 = torch.rand(
                     positions.shape,
@@ -1543,6 +1538,26 @@ def pso_search_cuda(
                 )
 
                 if progress is not None:
+                    is_checkpoint = (
+                        iteration
+                        == iterations - 1
+                        or (
+                            iteration
+                            + 1
+                        )
+                        % 10
+                        == 0
+                    )
+
+                    # Reading a CUDA scalar for display synchronizes the
+                    # device. Only do that at sparse progress checkpoints.
+                    if is_checkpoint:
+                        best_text = (
+                            f"{float(gbest_value.item()):+.6f}"
+                        )
+                    else:
+                        best_text = "running"
+
                     progress.update(
                         progress_offset
                         + (
@@ -1561,7 +1576,7 @@ def pso_search_cuda(
                             f"iteration "
                             f"{iteration + 1}/{iterations} · "
                             f"best "
-                            f"{gbest_value:+.6f}"
+                            f"{best_text}"
                         ),
                         force=(
                             restart
