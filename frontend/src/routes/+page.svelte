@@ -1271,6 +1271,46 @@
           />
 
           <MetricCard
+            label="Calmar"
+            value={fmtNum(
+              metrics.calmar
+            )}
+          />
+
+          <MetricCard
+            label="Volatility"
+            value={fmtPct(
+              metrics.annualized_volatility
+            )}
+          />
+
+          <MetricCard
+            label="Total return"
+            value={fmtPct(
+              metrics.total_return
+            )}
+            tone={
+              metrics.total_return > 0
+                ? 'good'
+                : metrics.total_return < 0
+                  ? 'bad'
+                  : 'neutral'
+            }
+          />
+
+          <MetricCard
+            label="Turnover"
+            value={
+              metrics.turnover_multiple == null
+                ? '—'
+                : `${fmtNum(
+                    metrics.turnover_multiple,
+                    1
+                  )}×`
+            }
+          />
+
+          <MetricCard
             label="Exposure"
             value={
               mode === 'game'
