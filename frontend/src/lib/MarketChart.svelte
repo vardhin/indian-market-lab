@@ -9,6 +9,8 @@
     downColor = '#ff5d6c',
     gridColor = '#1c2330',
     background = '#0b0f15',
+    textColor = '#8f9bb0',
+    borderColor = '#242b38',
     showVolume = true,
     showGrid = true,
     height = 520,
@@ -94,7 +96,7 @@
     chart.applyOptions({
       layout: {
         background: { type: ColorType.Solid, color: background },
-        textColor: '#8f9bb0',
+        textColor,
         fontFamily: 'Inter, ui-sans-serif, system-ui'
       },
       grid: {
@@ -119,7 +121,7 @@
       autoSize: false,
       layout: {
         background: { type: ColorType.Solid, color: background },
-        textColor: '#8f9bb0',
+        textColor,
         fontFamily: 'Inter, ui-sans-serif, system-ui'
       },
       grid: {
@@ -127,9 +129,11 @@
         horzLines: { color: showGrid ? gridColor : 'transparent' }
       },
       crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: '#242b38' },
+      rightPriceScale: {
+        borderColor
+      },
       timeScale: {
-        borderColor: '#242b38',
+        borderColor,
         timeVisible: true,
         secondsVisible: false
       },
@@ -174,8 +178,20 @@
   $effect(() => {
     gridColor;
     background;
+    textColor;
+    borderColor;
     showGrid;
-    if (chart) applyAppearance();
+    if (chart) {
+      chart.applyOptions({
+        rightPriceScale: {
+          borderColor
+        },
+        timeScale: {
+          borderColor
+        }
+      });
+      applyAppearance();
+    }
   });
 </script>
 
