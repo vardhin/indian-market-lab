@@ -76,14 +76,23 @@ a future intraday source.
 
 Human Game mode:
 
-- starts with configurable capital and maximum holdings
+- starts with configurable capital, maximum distinct holdings, start date and
+  historical lookback length
+- stitches prior-year OHLCV when necessary so the starting decision has real
+  chart history instead of a single candle
 - shows only market information available through the current historical date
-- prevents the price chart from showing future bars
-- executes BUY, SELL, SWITCH and LIQUIDATE decisions at the next market open
+  and hard-cuts all future price bars
+- uses whole shares with a minimum non-zero order of one share
+- supports adding to an existing holding / averaging down or up
+- supports partial selling / trimming
+- supports order sizing by shares, rupee notional, fraction of portfolio
+  equity, or target portfolio weight
+- supports HOLD, BUY/ADD, SELL/TRIM, SET TARGET, SWITCH and LIQUIDATE decisions
+  at the next market open
+- tracks average cost, position weight, unrealized P&L, realized P&L, fees,
+  turnover, cash, equity, CAGR, Sharpe, Sortino, Calmar and drawdown
 - uses the same Indian delivery cost/slippage functions as the research
   backtester
-- tracks fees, cash, holdings, equity, CAGR, Sharpe, Sortino, drawdown and
-  action history
 
 The game session is in-memory and resets when the FastAPI process restarts.
 
