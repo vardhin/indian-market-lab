@@ -974,51 +974,158 @@ def market_candles(
     year: int = 2023,
     interval: str = "1D",
     end_date: str | None = None,
+    lookback_bars: int | None = Query(
+        default=None,
+        ge=20,
+        le=5000,
+    ),
 ) -> dict[str, Any]:
-    try:
-        frame, ohlc_quality = _price_year_frame(
-            year
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        ) from exc
+    frames: list[
+        pd.DataFrame
+    ] = []
+    qualities: list[str] = []
 
-    subset = frame[
-        frame["symbol"]
-        .str.upper()
-        .eq(symbol.upper())
-    ][
-        [
-            "date",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-        ]
-    ].dropna(
-        subset=["open", "close"]
-    )
-
-    if end_date:
-        cutoff = pd.Timestamp(
+    cutoff = (
+        pd.Timestamp(
             end_date
         ).normalize()
-        subset = subset.loc[
-            subset["date"].le(
-                cutoff
-            )
-        ]
+        if end_date
+        else None
+    )
+    final_year = int(
+        cutoff.year
+        if cutoff
+        is not None
+        else year
+    )
 
-    if subset.empty:
+    years_to_load = [
+        final_year
+    ]
+    if (
+        cutoff is not None
+        and lookback_bars
+        is not None
+    ):
+        # Bring in prior years so a game can start anywhere without the
+        # chart looking as if market history began on the start date.
+        years_to_load.extend(
+            range(
+                final_year - 1,
+                max(
+                    final_year - 8,
+                    2009,
+                ),
+                -1,
+            )
+        )
+
+    for source_year in years_to_load:
+        try:
+            source, quality = (
+                _price_year_frame(
+                    int(
+                        source_year
+                    )
+                )
+            )
+        except FileNotFoundError:
+            continue
+
+        part = source[
+            source["symbol"]
+            .str.upper()
+            .eq(
+                symbol.upper()
+            )
+        ][
+            [
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+            ]
+        ].dropna(
+            subset=[
+                "open",
+                "close",
+            ]
+        )
+
+        if cutoff is not None:
+            part = part.loc[
+                part[
+                    "date"
+                ].le(
+                    cutoff
+                )
+            ]
+
+        if not part.empty:
+            frames.append(
+                part
+            )
+            qualities.append(
+                quality
+            )
+
+        if (
+            lookback_bars
+            is not None
+            and sum(
+                len(
+                    frame
+                )
+                for frame in frames
+            )
+            >= lookback_bars
+        ):
+            break
+
+    if not frames:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"No candles for {symbol} in {year}"
+                f"No candles for {symbol}"
             ),
         )
+
+    subset = (
+        pd.concat(
+            frames,
+            ignore_index=True,
+        )
+        .sort_values(
+            "date",
+            kind="stable",
+        )
+        .drop_duplicates(
+            subset=[
+                "date",
+            ],
+            keep="last",
+        )
+    )
+
+    if lookback_bars is not None:
+        subset = subset.tail(
+            int(
+                lookback_bars
+            )
+        )
+
+    ohlc_quality = (
+        "true_ohlc"
+        if qualities
+        and all(
+            quality
+            == "true_ohlc"
+            for quality in qualities
+        )
+        else "open_close_only"
+    )
 
     if (
         ohlc_quality
@@ -1065,6 +1172,16 @@ def market_candles(
         "symbol": symbol.upper(),
         "year": year,
         "interval": interval,
+        "end_date": (
+            None
+            if cutoff is None
+            else cutoff.strftime(
+                "%Y-%m-%d"
+            )
+        ),
+        "lookback_bars": (
+            lookback_bars
+        ),
         "available_intervals": [
             "1D",
             "1W",
