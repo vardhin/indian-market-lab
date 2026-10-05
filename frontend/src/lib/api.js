@@ -54,5 +54,6 @@ export const api = {
   createGame: (config) => request('/api/game', { method: 'POST', body: JSON.stringify(config) }),
   game: (id) => request(`/api/game/${id}`),
   gameAction: (id, action) => request(`/api/game/${id}/action`, { method: 'POST', body: JSON.stringify(action) }),
-  gameMarket: (id, query = '') => request(`/api/game/${id}/market?query=${encodeURIComponent(query)}`)
+  gameMarket: (id, query = '', limit = 5000) =>
+    request(`/api/game/${id}/market?query=${encodeURIComponent(query)}&limit=${limit}`)
 };
