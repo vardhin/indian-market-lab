@@ -48,6 +48,12 @@ RANDOM_STATE = 242
 def clone_state(state: dict) -> dict:
     return {
         "cash": float(state["cash"]),
+        "fees": float(
+            state.get(
+                "fees",
+                0.0,
+            )
+        ),
         "holdings": {
             str(cid): float(qty)
             for cid, qty in state["holdings"].items()
@@ -278,6 +284,9 @@ def execute_target(
         state["cash"] += float(
             execution["cash_in"]
         )
+        state["fees"] += float(
+            execution["fees"]
+        )
         turnover += float(
             execution["trade_value"]
         )
@@ -343,6 +352,9 @@ def execute_target(
         )
         state["cash"] -= float(
             execution["cash_out"]
+        )
+        state["fees"] += float(
+            execution["fees"]
         )
         turnover += float(
             execution["trade_value"]
@@ -1681,6 +1693,7 @@ def build_oracle(
             "cash": float(
                 initial_capital
             ),
+            "fees": 0.0,
             "holdings": {},
         }
 
