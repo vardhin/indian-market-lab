@@ -31,9 +31,15 @@ export const api = {
   stopRun: (id) => request(`/api/runs/${id}/stop`, { method: 'POST' }),
   marketYears: () => request('/api/market/years'),
   symbols: (year, query = '') => request(`/api/market/symbols?year=${year}&query=${encodeURIComponent(query)}`),
-  candles: (symbol, year, interval, endDate = null) => {
-    const end = endDate ? `&end_date=${encodeURIComponent(endDate)}` : '';
-    return request(`/api/market/candles?symbol=${encodeURIComponent(symbol)}&year=${year}&interval=${interval}${end}`);
+  candles: (symbol, year, interval, endDate = null, lookbackBars = null) => {
+    const params = new URLSearchParams({
+      symbol,
+      year: String(year),
+      interval
+    });
+    if (endDate) params.set('end_date', endDate);
+    if (lookbackBars != null) params.set('lookback_bars', String(lookbackBars));
+    return request(`/api/market/candles?${params.toString()}`);
   },
   dashboard: (year = 2023) => request(`/api/dashboard?year=${year}`),
   actionMatrix: (date = null, model = null) => {
