@@ -1091,8 +1091,19 @@
 
           {#if game}
             <div class="section">
-              <div class="section-title">
-                Market at {game.date}
+              <div
+                class="section-title"
+                style="display:flex;justify-content:space-between;gap:8px"
+              >
+                <span>
+                  Market at {game.date}
+                </span>
+                <span
+                  class="muted"
+                  style="font-weight:500;letter-spacing:0;text-transform:none"
+                >
+                  {gameMarket.length} eligible stocks
+                </span>
               </div>
 
               <div class="control">
@@ -1108,7 +1119,7 @@
               </div>
 
               <div class="game-market">
-                {#each gameMarket.slice(0, 18) as item}
+                {#each gameMarket as item}
                   <button
                     class:active={gameSelected === item.symbol}
                     class="game-symbol"
