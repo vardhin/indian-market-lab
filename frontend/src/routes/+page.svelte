@@ -13,6 +13,7 @@
   let customArgs = '';
   let runs = [];
   let dashboard = { metrics: {}, decisions: [], equity: [], reports: [] };
+  let actionMatrix = { state_date: null, rows: [] };
   let reports = [];
   let years = [2023];
 
@@ -210,16 +211,43 @@
     }
   }
 
+  async function loadActionMatrix(date = null) {
+    if (mode === 'game') return;
+    try {
+      actionMatrix = await api.actionMatrix(
+        date
+      );
+    } catch (error) {
+      actionMatrix = {
+        state_date: date,
+        rows: []
+      };
+      console.error(error);
+    }
+  }
+
   async function refreshDashboard() {
     try {
-      dashboard = await api.dashboard(
-        year
-      );
-      reports = await api.reports();
+      const [nextDashboard, nextReports] =
+        await Promise.all([
+          api.dashboard(year),
+          api.reports()
+        ]);
+      dashboard = nextDashboard;
+      reports = nextReports;
       if (dashboard.decisions?.length) {
         timelineIndex =
           dashboard.decisions.length - 1;
       }
+      await loadActionMatrix(
+        dashboard.decisions?.length
+          ? String(
+              dashboard.decisions[
+                dashboard.decisions.length - 1
+              ].date || ''
+            ).slice(0, 10)
+          : null
+      );
     } catch (error) {
       console.error(error);
     }
@@ -269,6 +297,20 @@
     symbolQuery = next;
     symbols = [];
     loadCandles();
+  }
+
+  function actionTargetLabel(row) {
+    if (!row?.target?.length) {
+      return '100% CASH';
+    }
+    return row.target
+      .map(
+        (item) =>
+          `${item.asset} ${(
+            Number(item.weight) * 100
+          ).toFixed(1)}%`
+      )
+      .join(' · ');
   }
 
   function parseTargetAssets(row) {
@@ -1369,6 +1411,20 @@
             decisions.length - 1
           )}
           bind:value={timelineIndex}
+          onchange={() => {
+            if (
+              mode === 'research'
+              && currentDecision
+            ) {
+              loadActionMatrix(
+                String(
+                  currentDecision.date
+                  || currentDecision.signal_date
+                  || ''
+                ).slice(0, 10)
+              );
+            }
+          }}
         />
       </div>
     </aside>
@@ -1496,42 +1552,116 @@
           </div>
         {/if}
       {:else if dockTab === 'actions'}
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Action / target</th>
-              <th>Predicted Q</th>
-              <th>Fees</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each decisions as row}
+        {#if mode === 'research'}
+          {#if actionMatrix.rows?.length}
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>State</th>
+                  <th>Target portfolio</th>
+                  <th>Model</th>
+                  <th>Pred Q</th>
+                  <th>Oracle Q</th>
+                  <th>Oracle rank</th>
+                  <th>Regret</th>
+                  <th>Future return</th>
+                  <th>Future MDD</th>
+                  <th>Turnover</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each actionMatrix.rows as row}
+                  <tr>
+                    <td>
+                      {row.state_date}
+                      {#if row.is_oracle_action}
+                        <span
+                          class="status completed"
+                          style="margin-left:6px"
+                        >
+                          oracle
+                        </span>
+                      {/if}
+                    </td>
+                    <td class="mono">
+                      {actionTargetLabel(row)}
+                    </td>
+                    <td>{row.model}</td>
+                    <td class="action-q">
+                      {fmtNum(
+                        row.predicted_q,
+                        6
+                      )}
+                    </td>
+                    <td>
+                      {fmtNum(
+                        row.oracle_q,
+                        6
+                      )}
+                    </td>
+                    <td>
+                      #{row.oracle_rank}
+                    </td>
+                    <td>
+                      {fmtNum(
+                        row.regret,
+                        6
+                      )}
+                    </td>
+                    <td>
+                      {fmtPct(
+                        row.oracle_terminal_return
+                      )}
+                    </td>
+                    <td>
+                      {fmtPct(
+                        row.oracle_max_drawdown
+                      )}
+                    </td>
+                    <td>
+                      {fmtMoney(
+                        row.oracle_turnover
+                      )}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {:else}
+            <div class="empty">
+              Run Portfolio Oracle V4 and Portfolio Student V4 to populate the full action-value matrix.
+            </div>
+          {/if}
+        {:else}
+          <table class="table">
+            <thead>
               <tr>
-                <td>
-                  {row.date
-                    || row.signal_date}
-                </td>
-                <td>
-                  {parseTargetAssets(
-                    row
-                  )}
-                </td>
-                <td>
-                  {fmtNum(
-                    row.predicted_q,
-                    6
-                  )}
-                </td>
-                <td>
-                  {fmtMoney(
-                    row.fees
-                  )}
-                </td>
+                <th>Signal</th>
+                <th>Executed</th>
+                <th>Your action</th>
+                <th>Fees</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {#each decisions as row}
+                <tr>
+                  <td>{row.signal_date}</td>
+                  <td>{row.execution_date}</td>
+                  <td>
+                    {parseTargetAssets(
+                      row
+                    )}
+                  </td>
+                  <td>
+                    {fmtMoney(
+                      row.fees
+                    )}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
       {:else if dockTab === 'equity'}
         <table class="table">
           <thead>
