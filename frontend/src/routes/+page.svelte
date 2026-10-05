@@ -4,6 +4,186 @@
   import MetricCard from '$lib/MetricCard.svelte';
   import { api } from '$lib/api.js';
 
+  const THEMES = [
+    {
+      id: 'catppuccin-mocha',
+      family: 'Catppuccin',
+      label: 'Mocha',
+      mode: 'dark',
+      accent: '#89b4fa',
+      swatches: ['#11111b', '#cdd6f4', '#89b4fa', '#a6e3a1'],
+      chart: {
+        background: '#11111b',
+        grid: '#313244',
+        up: '#a6e3a1',
+        down: '#f38ba8'
+      }
+    },
+    {
+      id: 'catppuccin-latte',
+      family: 'Catppuccin',
+      label: 'Latte',
+      mode: 'light',
+      accent: '#1e66f5',
+      swatches: ['#eff1f5', '#4c4f69', '#1e66f5', '#40a02b'],
+      chart: {
+        background: '#eff1f5',
+        grid: '#ccd0da',
+        up: '#40a02b',
+        down: '#d20f39'
+      }
+    },
+    {
+      id: 'dracula',
+      family: 'Dracula',
+      label: 'Night',
+      mode: 'dark',
+      accent: '#bd93f9',
+      swatches: ['#282a36', '#f8f8f2', '#bd93f9', '#50fa7b'],
+      chart: {
+        background: '#282a36',
+        grid: '#44475a',
+        up: '#50fa7b',
+        down: '#ff5555'
+      }
+    },
+    {
+      id: 'dracula-day',
+      family: 'Dracula',
+      label: 'Day',
+      mode: 'light',
+      accent: '#7c4dff',
+      swatches: ['#f8f8f2', '#282a36', '#7c4dff', '#209b5a'],
+      chart: {
+        background: '#f8f8f2',
+        grid: '#d8d5e2',
+        up: '#209b5a',
+        down: '#d83b48'
+      }
+    },
+    {
+      id: 'gruvbox-dark',
+      family: 'Gruvbox',
+      label: 'Dark',
+      mode: 'dark',
+      accent: '#d79921',
+      swatches: ['#282828', '#ebdbb2', '#d79921', '#b8bb26'],
+      chart: {
+        background: '#282828',
+        grid: '#504945',
+        up: '#b8bb26',
+        down: '#fb4934'
+      }
+    },
+    {
+      id: 'gruvbox-light',
+      family: 'Gruvbox',
+      label: 'Light',
+      mode: 'light',
+      accent: '#b57614',
+      swatches: ['#fbf1c7', '#3c3836', '#b57614', '#79740e'],
+      chart: {
+        background: '#fbf1c7',
+        grid: '#d5c4a1',
+        up: '#79740e',
+        down: '#cc241d'
+      }
+    },
+    {
+      id: 'terminal-green',
+      family: 'Terminal',
+      label: 'Phosphor',
+      mode: 'dark',
+      accent: '#33ff88',
+      swatches: ['#030806', '#c8ffd9', '#33ff88', '#9dff00'],
+      chart: {
+        background: '#030806',
+        grid: '#123523',
+        up: '#33ff88',
+        down: '#ff5c5c'
+      }
+    },
+    {
+      id: 'terminal-paper',
+      family: 'Terminal',
+      label: 'Paper',
+      mode: 'light',
+      accent: '#087f3d',
+      swatches: ['#f4f4e8', '#15351f', '#087f3d', '#6d8700'],
+      chart: {
+        background: '#f4f4e8',
+        grid: '#cbd7c8',
+        up: '#087f3d',
+        down: '#b4232f'
+      }
+    },
+    {
+      id: 'nord-dark',
+      family: 'Nord',
+      label: 'Polar Night',
+      mode: 'dark',
+      accent: '#88c0d0',
+      swatches: ['#2e3440', '#eceff4', '#88c0d0', '#a3be8c'],
+      chart: {
+        background: '#2e3440',
+        grid: '#4c566a',
+        up: '#a3be8c',
+        down: '#bf616a'
+      }
+    },
+    {
+      id: 'nord-light',
+      family: 'Nord',
+      label: 'Snow Storm',
+      mode: 'light',
+      accent: '#5e81ac',
+      swatches: ['#eceff4', '#2e3440', '#5e81ac', '#4f7d4e'],
+      chart: {
+        background: '#eceff4',
+        grid: '#d8dee9',
+        up: '#4f7d4e',
+        down: '#bf616a'
+      }
+    },
+    {
+      id: 'solarized-dark',
+      family: 'Solarized',
+      label: 'Dark',
+      mode: 'dark',
+      accent: '#268bd2',
+      swatches: ['#002b36', '#93a1a1', '#268bd2', '#859900'],
+      chart: {
+        background: '#002b36',
+        grid: '#073642',
+        up: '#859900',
+        down: '#dc322f'
+      }
+    },
+    {
+      id: 'solarized-light',
+      family: 'Solarized',
+      label: 'Light',
+      mode: 'light',
+      accent: '#268bd2',
+      swatches: ['#fdf6e3', '#657b83', '#268bd2', '#859900'],
+      chart: {
+        background: '#fdf6e3',
+        grid: '#eee8d5',
+        up: '#859900',
+        down: '#dc322f'
+      }
+    }
+  ];
+
+  const THEME_FAMILIES = [
+    'Catppuccin',
+    'Dracula',
+    'Gruvbox',
+    'Terminal',
+    'Nord',
+    'Solarized'
+  ];
+
   let mode = 'research';
   let dockTab = 'runs';
   let health = null;
@@ -42,6 +222,8 @@
   let candleStatus = 'idle';
   let ohlcQuality = 'unknown';
   let timelineIndex = 0;
+  let themeId = 'catppuccin-mocha';
+  let themeMenuOpen = false;
 
   let game = null;
   let gameMarket = [];
@@ -65,6 +247,12 @@
   let toastTimer;
 
   $: selectedExperiment = experiments.find((item) => item.id === experimentId);
+  $: activeTheme =
+    THEMES.find(
+      (theme) =>
+        theme.id === themeId
+    )
+    || THEMES[0];
   $: selectedRun = runs.find((item) => item.id === selectedRunId);
   $: metrics = mode === 'game' && game ? game.metrics || {} : dashboard.metrics || {};
   $: decisions = mode === 'game' && game ? game.history || [] : dashboard.decisions || [];
@@ -87,6 +275,52 @@
       (holding) =>
         holding.symbol === holdingModalSymbol
     ) || null;
+
+  function applyTheme(
+    nextThemeId,
+    persist = true
+  ) {
+    const theme =
+      THEMES.find(
+        (item) =>
+          item.id === nextThemeId
+      )
+      || THEMES[0];
+
+    themeId = theme.id;
+
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.theme =
+        theme.id;
+      document.documentElement.style.colorScheme =
+        theme.mode;
+    }
+
+    background =
+      theme.chart.background;
+    gridColor =
+      theme.chart.grid;
+    upColor =
+      theme.chart.up;
+    downColor =
+      theme.chart.down;
+
+    if (
+      persist
+      && typeof localStorage
+        !== 'undefined'
+    ) {
+      localStorage.setItem(
+        'indian-market-lab-theme',
+        theme.id
+      );
+    }
+  }
+
+  function chooseTheme(id) {
+    applyTheme(id);
+    themeMenuOpen = false;
+  }
 
   function notify(message, type = 'info') {
     toast = { message, type };
@@ -709,6 +943,16 @@
   }
 
   onMount(async () => {
+    const savedTheme =
+      localStorage.getItem(
+        'indian-market-lab-theme'
+      )
+      || 'catppuccin-mocha';
+    applyTheme(
+      savedTheme,
+      false
+    );
+
     try {
       [health, experiments, scripts, years] =
         await Promise.all([
@@ -824,6 +1068,99 @@
     </div>
 
     <div class="top-spacer"></div>
+
+    <div class="theme-picker">
+      <button
+        class="theme-trigger"
+        aria-haspopup="menu"
+        aria-expanded={themeMenuOpen}
+        onclick={() =>
+          (themeMenuOpen =
+            !themeMenuOpen)}
+      >
+        <span
+          class="theme-accent-dot"
+          style={`background:${activeTheme.accent}`}
+        ></span>
+        <span class="theme-trigger-name">
+          {activeTheme.family}
+          · {activeTheme.label}
+        </span>
+        <span class="theme-mode-icon">
+          {activeTheme.mode === 'light'
+            ? '☀'
+            : '☾'}
+        </span>
+        <span class="theme-chevron">
+          ▾
+        </span>
+      </button>
+
+      {#if themeMenuOpen}
+        <div
+          class="theme-menu"
+          role="menu"
+        >
+          <div class="theme-menu-head">
+            <div>
+              <strong>Console theme</strong>
+              <span>
+                terminal palettes · dark & light
+              </span>
+            </div>
+          </div>
+
+          <div class="theme-menu-scroll">
+            {#each THEME_FAMILIES as family}
+              <div class="theme-family">
+                <div class="theme-family-name">
+                  {family}
+                </div>
+
+                <div class="theme-family-options">
+                  {#each THEMES.filter((theme) => theme.family === family) as theme}
+                    <button
+                      class:active={theme.id === themeId}
+                      class="theme-option"
+                      role="menuitem"
+                      onclick={() =>
+                        chooseTheme(
+                          theme.id
+                        )}
+                    >
+                      <span class="theme-swatch-row">
+                        {#each theme.swatches as color}
+                          <span
+                            class="theme-swatch"
+                            style={`background:${color}`}
+                          ></span>
+                        {/each}
+                      </span>
+
+                      <span class="theme-option-copy">
+                        <strong>
+                          {theme.label}
+                        </strong>
+                        <small>
+                          {theme.mode}
+                        </small>
+                      </span>
+
+                      <span class="theme-option-mode">
+                        {theme.mode === 'light'
+                          ? '☀'
+                          : '☾'}
+                      </span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+
     <div class="health">
       <span
         class:ok={health?.ok}
