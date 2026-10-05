@@ -34,6 +34,7 @@ from controller_v1 import (  # noqa: E402
     attach_scores,
     load_panel,
 )
+from experiment_progress import ProgressReporter  # noqa: E402
 
 
 DEFAULT_SLOTS = 5
@@ -677,6 +678,9 @@ def pso_search(
     costs: CostProfile,
     drawdown_penalty: float,
     random_state: int,
+    progress: ProgressReporter | None = None,
+    progress_offset: int = 0,
+    progress_message: str = "",
 ) -> tuple[dict, list[dict]]:
     horizon = (
         len(market_indices)
@@ -871,6 +875,36 @@ def pso_search(
                     ],
                     -6.0,
                     6.0,
+                )
+
+            if progress is not None:
+                local_iterations = (
+                    restart
+                    * iterations
+                    + _iteration
+                    + 1
+                )
+                progress.update(
+                    progress_offset
+                    + local_iterations
+                    * particles,
+                    message=(
+                        progress_message
+                    ),
+                    detail=(
+                        f"restart "
+                        f"{restart + 1}/{restarts} · "
+                        f"iteration "
+                        f"{_iteration + 1}/{iterations} · "
+                        f"best "
+                        f"{gbest_value:+.6f}"
+                    ),
+                    force=(
+                        restart
+                        == restarts - 1
+                        and _iteration
+                        == iterations - 1
+                    ),
                 )
 
         for i in range(
@@ -1667,6 +1701,91 @@ def build_oracle(
 
     processed_days = 0
 
+    total_decisions = 0
+    for planned_year in years:
+        planned_indices = [
+            int(index)
+            for index in market_indices
+            if int(
+                pd.Timestamp(
+                    dates[index]
+                ).year
+            )
+            == int(
+                planned_year
+            )
+        ]
+        if len(
+            planned_indices
+        ) <= lookahead:
+            continue
+
+        for planned_position in range(
+            0,
+            len(
+                planned_indices
+            )
+            - lookahead,
+        ):
+            planned_signal_index = int(
+                planned_indices[
+                    planned_position
+                ]
+            )
+            if (
+                candidates_by_index[
+                    planned_signal_index
+                ].empty
+            ):
+                continue
+
+            total_decisions += 1
+            if (
+                max_decision_days
+                is not None
+                and total_decisions
+                >= max_decision_days
+            ):
+                break
+
+        if (
+            max_decision_days
+            is not None
+            and total_decisions
+            >= max_decision_days
+        ):
+            break
+
+    work_per_decision = int(
+        particles
+        * iterations
+        * restarts
+    )
+    total_work = max(
+        1,
+        int(
+            total_decisions
+            * work_per_decision
+        ),
+    )
+    progress = ProgressReporter(
+        phase="portfolio_oracle_v4",
+        total=total_work,
+    )
+    progress.update(
+        0,
+        message=(
+            f"0/{total_decisions} "
+            "decision states"
+        ),
+        detail=(
+            f"{particles} particles · "
+            f"{restarts} restarts · "
+            f"{iterations} iterations"
+        ),
+        force=True,
+    )
+
     for year in years:
         year_indices = [
             int(index)
@@ -1767,6 +1886,17 @@ def build_oracle(
                     random_state=(
                         RANDOM_STATE
                         + signal_index
+                    ),
+                    progress=progress,
+                    progress_offset=(
+                        processed_days
+                        * work_per_decision
+                    ),
+                    progress_message=(
+                        f"state "
+                        f"{processed_days + 1}/"
+                        f"{total_decisions} · "
+                        f"{signal_date.date()}"
                     ),
                 )
             )
@@ -1936,18 +2066,20 @@ def build_oracle(
 
             processed_days += 1
 
-            if (
+            progress.update(
                 processed_days
-                % 10
-                == 0
-            ):
-                print(
-                    "Oracle decisions: "
-                    f"{processed_days:,}; "
-                    "teacher rows: "
-                    f"{len(teacher_rows):,}",
-                    flush=True,
-                )
+                * work_per_decision,
+                message=(
+                    f"{processed_days}/"
+                    f"{total_decisions} "
+                    "decision states"
+                ),
+                detail=(
+                    f"{len(teacher_rows):,} "
+                    "teacher rows"
+                ),
+                force=True,
+            )
 
         if (
             max_decision_days
@@ -1956,6 +2088,18 @@ def build_oracle(
             >= max_decision_days
         ):
             break
+
+    progress.finish(
+        message=(
+            f"{processed_days}/"
+            f"{total_decisions} "
+            "decision states"
+        ),
+        detail=(
+            f"{len(teacher_rows):,} "
+            "teacher rows"
+        ),
+    )
 
     teacher = pd.DataFrame(
         teacher_rows
