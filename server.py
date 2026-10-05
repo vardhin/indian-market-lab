@@ -144,6 +144,12 @@ class CustomRunRequest(BaseModel):
 
 class GameCreate(BaseModel):
     year: int = 2023
+    start_date: str | None = None
+    history_bars: int = Field(
+        default=260,
+        ge=20,
+        le=2000,
+    )
     initial_capital: float = 50_000.0
     max_holdings: int = 5
     brokerage_per_order: float = 15.0
@@ -152,11 +158,47 @@ class GameCreate(BaseModel):
 
 
 class GameAction(BaseModel):
-    type: Literal["HOLD", "BUY", "SELL", "SWITCH", "LIQUIDATE"]
+    type: Literal[
+        "HOLD",
+        "BUY",
+        "SELL",
+        "SWITCH",
+        "SET_TARGET",
+        "LIQUIDATE",
+    ]
     symbol: str | None = None
     from_symbol: str | None = None
     to_symbol: str | None = None
-    weight: float | None = None
+    sizing_mode: Literal[
+        "shares",
+        "rupees",
+        "equity_fraction",
+        "target_weight",
+    ] = "shares"
+    quantity: int | None = Field(
+        default=None,
+        ge=1,
+    )
+    amount: float | None = Field(
+        default=None,
+        gt=0.0,
+    )
+    fraction: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1.0,
+    )
+    target_weight: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
+    # Backward-compatible alias from the first UI version.
+    weight: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1.0,
+    )
 
 
 RUNS: dict[str, dict[str, Any]] = {}
@@ -1587,6 +1629,9 @@ def _game_snapshot(
     for symbol, quantity in sorted(
         game["holdings"].items()
     ):
+        quantity = int(
+            quantity
+        )
         price = float(
             close_map.get(
                 symbol,
@@ -1599,21 +1644,92 @@ def _game_snapshot(
         game["last_prices"][
             symbol
         ] = price
-        value = quantity * price
-        holdings_value += value
-        holdings.append(
-            {
-                "symbol": symbol,
-                "quantity": quantity,
-                "price": price,
-                "value": value,
-            }
+
+        value = (
+            quantity
+            * price
         )
+        holdings_value += value
+
+        average_cost = float(
+            game.get(
+                "average_cost",
+                {},
+            ).get(
+                symbol,
+                price,
+            )
+        )
+        cost_basis = (
+            quantity
+            * average_cost
+        )
+        unrealized_pnl = (
+            value
+            - cost_basis
+        )
+        unrealized_return = (
+            unrealized_pnl
+            / cost_basis
+            if cost_basis > 0
+            else 0.0
+        )
+
+        holdings.append({
+            "symbol": symbol,
+            "quantity": quantity,
+            "price": price,
+            "value": value,
+            "average_cost": (
+                average_cost
+            ),
+            "cost_basis": (
+                cost_basis
+            ),
+            "unrealized_pnl": (
+                unrealized_pnl
+            ),
+            "unrealized_return": (
+                unrealized_return
+            ),
+        })
 
     equity = float(
         game["cash"]
         + holdings_value
     )
+
+    for holding in holdings:
+        holding["weight"] = (
+            float(
+                holding[
+                    "value"
+                ]
+            )
+            / equity
+            if equity > 0
+            else 0.0
+        )
+        reference_price = max(
+            float(
+                holding[
+                    "price"
+                ]
+            ),
+            1e-12,
+        )
+        holding[
+            "estimated_max_add_shares"
+        ] = int(
+            max(
+                0,
+                math.floor(
+                    game["cash"]
+                    / reference_price
+                ),
+            )
+        )
+
     date_text = date.strftime(
         "%Y-%m-%d"
     )
@@ -1676,7 +1792,11 @@ def _game_snapshot(
         (
             date
             - pd.Timestamp(
-                dates[0]
+                dates[
+                    game[
+                        "start_position"
+                    ]
+                ]
             )
         ).days
         / 365.25,
@@ -1689,8 +1809,11 @@ def _game_snapshot(
                 "initial_capital"
             ]
         )
-        ** (1 / years)
-        - 1
+        ** (
+            1.0
+            / years
+        )
+        - 1.0
         if equity > 0
         else -1.0
     )
@@ -1699,7 +1822,9 @@ def _game_snapshot(
             returns.std(
                 ddof=1
             )
-            * math.sqrt(252.0)
+            * math.sqrt(
+                252.0
+            )
         )
         if len(returns) > 1
         else 0.0
@@ -1729,7 +1854,9 @@ def _game_snapshot(
             downside.std(
                 ddof=1
             )
-            * math.sqrt(252.0)
+            * math.sqrt(
+                252.0
+            )
         )
         if len(downside) > 1
         else 0.0
@@ -1755,20 +1882,74 @@ def _game_snapshot(
     return {
         "id": game["id"],
         "year": game["year"],
+        "start_date": pd.Timestamp(
+            dates[
+                game[
+                    "start_position"
+                ]
+            ]
+        ).strftime(
+            "%Y-%m-%d"
+        ),
+        "history_bars": int(
+            game[
+                "history_bars"
+            ]
+        ),
         "date": date_text,
         "position": index,
-        "total_steps": len(dates),
+        "start_position": int(
+            game[
+                "start_position"
+            ]
+        ),
+        "total_steps": (
+            len(
+                dates
+            )
+            - game[
+                "start_position"
+            ]
+        ),
         "progress": (
-            index
+            (
+                index
+                - game[
+                    "start_position"
+                ]
+            )
             / max(
                 1,
                 len(dates)
-                - 1,
+                - 1
+                - game[
+                    "start_position"
+                ],
             )
         ),
-        "cash": game["cash"],
+        "cash": float(
+            game["cash"]
+        ),
         "equity": equity,
-        "fees": game["fees"],
+        "fees": float(
+            game["fees"]
+        ),
+        "realized_pnl": float(
+            game.get(
+                "realized_pnl",
+                0.0,
+            )
+        ),
+        "order_rules": {
+            "fractional_shares": False,
+            "minimum_quantity": 1,
+            "sizing_modes": [
+                "shares",
+                "rupees",
+                "equity_fraction",
+                "target_weight",
+            ],
+        },
         "holdings": holdings,
         "history": game["history"],
         "equity_curve": game["equity"],
@@ -1806,7 +1987,7 @@ def _game_snapshot(
                 / game[
                     "initial_capital"
                 ]
-                - 1
+                - 1.0
             ),
         },
     }
@@ -1837,13 +2018,70 @@ def create_game(
     if len(dates) < 2:
         raise HTTPException(
             status_code=400,
-            detail="Not enough market days",
+            detail=(
+                "Not enough market days"
+            ),
         )
 
-    game_id = uuid.uuid4().hex[:10]
-    GAMES[game_id] = {
+    if payload.start_date:
+        requested = pd.Timestamp(
+            payload.start_date
+        ).normalize()
+        valid_positions = [
+            index
+            for index, date
+            in enumerate(
+                dates
+            )
+            if pd.Timestamp(
+                date
+            )
+            >= requested
+        ]
+        if not valid_positions:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Start date is after the "
+                    "available year."
+                ),
+            )
+        start_position = int(
+            valid_positions[
+                0
+            ]
+        )
+    else:
+        start_position = 0
+
+    if (
+        start_position
+        >= len(
+            dates
+        )
+        - 1
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Start date must leave at least "
+                "one future market session."
+            ),
+        )
+
+    game_id = (
+        uuid.uuid4().hex[
+            :10
+        ]
+    )
+    GAMES[
+        game_id
+    ] = {
         "id": game_id,
         "year": payload.year,
+        "history_bars": int(
+            payload.history_bars
+        ),
         "initial_capital": float(
             payload.initial_capital
         ),
@@ -1862,11 +2100,18 @@ def create_game(
             ),
         ),
         "dates": dates,
-        "position": 0,
+        "start_position": (
+            start_position
+        ),
+        "position": (
+            start_position
+        ),
         "cash": float(
             payload.initial_capital
         ),
         "holdings": {},
+        "average_cost": {},
+        "realized_pnl": 0.0,
         "fees": 0.0,
         "turnover": 0.0,
         "history": [],
@@ -1875,7 +2120,9 @@ def create_game(
         "finished": False,
     }
     return _game_snapshot(
-        GAMES[game_id]
+        GAMES[
+            game_id
+        ]
     )
 
 
@@ -1929,11 +2176,15 @@ def game_action(
     if game["finished"]:
         raise HTTPException(
             status_code=400,
-            detail="Game already finished",
+            detail=(
+                "Game already finished"
+            ),
         )
     if (
         game["position"]
-        >= len(game["dates"])
+        >= len(
+            game["dates"]
+        )
         - 1
     ):
         game["finished"] = True
@@ -1955,6 +2206,10 @@ def game_action(
             + 1
         ]
     )
+    signal_day = _game_day(
+        frame,
+        signal_date,
+    )
     next_day = _game_day(
         frame,
         next_date,
@@ -1963,189 +2218,345 @@ def game_action(
         "costs"
     ]
     kind = action.type
-    fees_before = game["fees"]
 
-    def sell_symbol(
-        symbol: str,
-    ) -> None:
-        symbol = symbol.upper()
-        quantity = float(
-            game["holdings"].get(
-                symbol,
-                0.0,
+    signal_close = {
+        str(symbol): float(
+            row["close"]
+        )
+        for symbol, row
+        in signal_day.iterrows()
+        if pd.notna(
+            row.get(
+                "close"
             )
         )
-        if quantity <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"No holding in {symbol}"
-                ),
+    }
+
+    def equity_at_signal() -> float:
+        return float(
+            game["cash"]
+            + sum(
+                float(quantity)
+                * float(
+                    signal_close.get(
+                        symbol,
+                        game[
+                            "last_prices"
+                        ].get(
+                            symbol,
+                            0.0,
+                        ),
+                    )
+                )
+                for symbol, quantity
+                in game[
+                    "holdings"
+                ].items()
             )
+        )
+
+    def next_open(
+        symbol: str,
+    ) -> float:
+        symbol = symbol.upper()
         if symbol not in next_day.index:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"No next-open quote for {symbol}"
+                    "No next-open quote "
+                    f"for {symbol}"
                 ),
             )
-
-        execution = sell_execution(
-            float(
-                next_day.loc[
-                    symbol,
-                    "open",
-                ]
-            ),
-            quantity,
-            costs,
-        )
-        game["cash"] += float(
-            execution["cash_in"]
-        )
-        game["fees"] += float(
-            execution["fees"]
-        )
-        game["turnover"] += float(
-            execution[
-                "trade_value"
-            ]
-        )
-        game["holdings"].pop(
-            symbol,
-            None,
-        )
-
-    def buy_symbol(
-        symbol: str,
-        weight: float | None,
-    ) -> None:
-        symbol = symbol.upper()
-        if symbol in game["holdings"]:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Already holding {symbol}"
-                ),
-            )
-        if (
-            len(game["holdings"])
-            >= game["max_holdings"]
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Max holdings reached",
-            )
-        if symbol not in next_day.index:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"No next-open quote for {symbol}"
-                ),
-            )
-
-        quoted = float(
+        price = float(
             next_day.loc[
                 symbol,
                 "open",
             ]
         )
-        target_weight = float(
-            weight
-            if weight is not None
-            else (
-                1.0
-                / game[
-                    "max_holdings"
-                ]
+        if (
+            not math.isfinite(
+                price
             )
-        )
-        target_weight = min(
-            max(
-                target_weight,
-                0.01,
-            ),
-            1.0,
-        )
-        signal_frame = _year_frame(
-            game["year"]
-        )
-        signal_date = pd.Timestamp(
-            game["dates"][
-                game["position"]
-            ]
-        )
-        signal_day = signal_frame.loc[
-            signal_frame["date"].eq(
-                signal_date
+            or price <= 0
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Invalid next-open quote "
+                    f"for {symbol}"
+                ),
             )
-        ]
-        close_map = (
-            signal_day.set_index(
-                "symbol"
-            )["close"].to_dict()
-        )
-        equity_before = float(
-            game["cash"]
-            + sum(
-                float(quantity)
-                * float(
-                    close_map.get(
-                        held_symbol,
-                        game["last_prices"].get(
-                            held_symbol,
-                            0.0,
-                        ),
-                    )
-                )
-                for held_symbol, quantity
-                in game["holdings"].items()
-            )
-        )
-        budget = min(
-            game["cash"],
-            equity_before
-            * target_weight,
-        )
+        return price
 
-        quantity = int(
+    def delta_to_target(
+        symbol: str,
+        target_weight: float,
+    ) -> int:
+        symbol = symbol.upper()
+        equity = equity_at_signal()
+        quoted = next_open(
+            symbol
+        )
+        desired = int(
             max(
                 0,
                 math.floor(
-                    budget
-                    / max(
-                        quoted,
-                        1e-12,
+                    equity
+                    * float(
+                        target_weight
                     )
+                    / quoted
                 ),
             )
         )
-
-        while quantity > 0:
-            execution = buy_execution(
-                quoted,
-                quantity,
-                costs,
+        current = int(
+            game[
+                "holdings"
+            ].get(
+                symbol,
+                0,
             )
-            if (
-                execution["cash_out"]
-                <= game["cash"]
-                + 1e-9
-            ):
-                break
-            quantity -= 1
+        )
+        return (
+            desired
+            - current
+        )
 
+    def requested_quantity(
+        *,
+        symbol: str,
+        side: Literal[
+            "buy",
+            "sell",
+        ],
+    ) -> int:
+        symbol = symbol.upper()
+        quoted = next_open(
+            symbol
+        )
+        current = int(
+            game[
+                "holdings"
+            ].get(
+                symbol,
+                0,
+            )
+        )
+        mode = action.sizing_mode
+
+        if mode == "shares":
+            if action.quantity is None:
+                if side == "sell":
+                    return current
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Share-sized BUY requires "
+                        "a quantity."
+                    ),
+                )
+            return int(
+                action.quantity
+            )
+
+        if mode == "rupees":
+            if action.amount is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Rupee-sized order "
+                        "requires amount."
+                    ),
+                )
+            return max(
+                1,
+                int(
+                    math.floor(
+                        float(
+                            action.amount
+                        )
+                        / quoted
+                    )
+                ),
+            )
+
+        if mode == "equity_fraction":
+            if action.fraction is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Equity-fraction order "
+                        "requires fraction."
+                    ),
+                )
+            return max(
+                1,
+                int(
+                    math.floor(
+                        equity_at_signal()
+                        * float(
+                            action.fraction
+                        )
+                        / quoted
+                    )
+                ),
+            )
+
+        if mode == "target_weight":
+            target = (
+                action.target_weight
+                if action.target_weight
+                is not None
+                else action.weight
+            )
+            if target is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Target-weight order "
+                        "requires target_weight."
+                    ),
+                )
+            delta = delta_to_target(
+                symbol,
+                float(
+                    target
+                ),
+            )
+            return (
+                max(
+                    0,
+                    delta,
+                )
+                if side == "buy"
+                else max(
+                    0,
+                    -delta,
+                )
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown sizing mode: {mode}"
+            ),
+        )
+
+    def execute_buy(
+        symbol: str,
+        quantity: int,
+    ) -> dict[str, Any]:
+        symbol = symbol.upper()
+        quantity = int(
+            quantity
+        )
         if quantity <= 0:
             raise HTTPException(
                 status_code=400,
-                detail="Insufficient cash",
+                detail=(
+                    "Buy quantity resolves to zero."
+                ),
             )
 
+        is_new = (
+            symbol
+            not in game[
+                "holdings"
+            ]
+        )
+        if (
+            is_new
+            and len(
+                game["holdings"]
+            )
+            >= game[
+                "max_holdings"
+            ]
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Max distinct holdings reached. "
+                    "You can still add to an "
+                    "existing position."
+                ),
+            )
+
+        quoted = next_open(
+            symbol
+        )
+        requested = quantity
+        actual = quantity
+        execution = None
+
+        while actual > 0:
+            candidate = buy_execution(
+                quoted,
+                actual,
+                costs,
+            )
+            if (
+                candidate[
+                    "cash_out"
+                ]
+                <= game["cash"]
+                + 1e-9
+            ):
+                execution = candidate
+                break
+            actual -= 1
+
+        if (
+            actual <= 0
+            or execution is None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Insufficient cash for even "
+                    "one share after fees."
+                ),
+            )
+
+        old_quantity = int(
+            game[
+                "holdings"
+            ].get(
+                symbol,
+                0,
+            )
+        )
+        old_average = float(
+            game[
+                "average_cost"
+            ].get(
+                symbol,
+                0.0,
+            )
+        )
+        new_quantity = (
+            old_quantity
+            + actual
+        )
+        total_basis = (
+            old_quantity
+            * old_average
+            + float(
+                execution[
+                    "cash_out"
+                ]
+            )
+        )
+
         game["cash"] -= float(
-            execution["cash_out"]
+            execution[
+                "cash_out"
+            ]
         )
         game["fees"] += float(
-            execution["fees"]
+            execution[
+                "fees"
+            ]
         )
         game["turnover"] += float(
             execution[
@@ -2154,9 +2565,183 @@ def game_action(
         )
         game["holdings"][
             symbol
-        ] = float(
-            quantity
+        ] = new_quantity
+        game["average_cost"][
+            symbol
+        ] = (
+            total_basis
+            / new_quantity
         )
+
+        return {
+            "side": "BUY",
+            "symbol": symbol,
+            "requested_quantity": (
+                requested
+            ),
+            "executed_quantity": int(
+                actual
+            ),
+            "execution_price": float(
+                execution[
+                    "execution_price"
+                ]
+            ),
+            "trade_value": float(
+                execution[
+                    "trade_value"
+                ]
+            ),
+            "fees": float(
+                execution[
+                    "fees"
+                ]
+            ),
+            "position_quantity_after": (
+                new_quantity
+            ),
+            "average_cost_after": float(
+                game[
+                    "average_cost"
+                ][
+                    symbol
+                ]
+            ),
+        }
+
+    def execute_sell(
+        symbol: str,
+        quantity: int,
+    ) -> dict[str, Any]:
+        symbol = symbol.upper()
+        held = int(
+            game[
+                "holdings"
+            ].get(
+                symbol,
+                0,
+            )
+        )
+        if held <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No holding in {symbol}"
+                ),
+            )
+
+        quantity = int(
+            min(
+                quantity,
+                held,
+            )
+        )
+        if quantity <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Sell quantity resolves to zero."
+                ),
+            )
+
+        quoted = next_open(
+            symbol
+        )
+        execution = sell_execution(
+            quoted,
+            quantity,
+            costs,
+        )
+        average_cost = float(
+            game[
+                "average_cost"
+            ].get(
+                symbol,
+                0.0,
+            )
+        )
+        realized = (
+            float(
+                execution[
+                    "cash_in"
+                ]
+            )
+            - average_cost
+            * quantity
+        )
+
+        game["cash"] += float(
+            execution[
+                "cash_in"
+            ]
+        )
+        game["fees"] += float(
+            execution[
+                "fees"
+            ]
+        )
+        game["turnover"] += float(
+            execution[
+                "trade_value"
+            ]
+        )
+        game["realized_pnl"] += float(
+            realized
+        )
+
+        remaining = (
+            held
+            - quantity
+        )
+        if remaining > 0:
+            game["holdings"][
+                symbol
+            ] = remaining
+        else:
+            game["holdings"].pop(
+                symbol,
+                None,
+            )
+            game[
+                "average_cost"
+            ].pop(
+                symbol,
+                None,
+            )
+
+        return {
+            "side": "SELL",
+            "symbol": symbol,
+            "executed_quantity": (
+                quantity
+            ),
+            "execution_price": float(
+                execution[
+                    "execution_price"
+                ]
+            ),
+            "trade_value": float(
+                execution[
+                    "trade_value"
+                ]
+            ),
+            "fees": float(
+                execution[
+                    "fees"
+                ]
+            ),
+            "realized_pnl": float(
+                realized
+            ),
+            "position_quantity_after": (
+                remaining
+            ),
+            "average_cost_after": (
+                average_cost
+                if remaining > 0
+                else None
+            ),
+        }
 
     cash_before = float(
         game["cash"]
@@ -2164,7 +2749,12 @@ def game_action(
     holdings_before = dict(
         game["holdings"]
     )
-    fees_state_before = float(
+    average_cost_before = dict(
+        game[
+            "average_cost"
+        ]
+    )
+    fees_before = float(
         game["fees"]
     )
     turnover_before = float(
@@ -2173,27 +2763,97 @@ def game_action(
             0.0,
         )
     )
+    realized_before = float(
+        game.get(
+            "realized_pnl",
+            0.0,
+        )
+    )
+
+    executions: list[
+        dict[str, Any]
+    ] = []
 
     try:
         if kind == "BUY":
             if not action.symbol:
                 raise HTTPException(
                     status_code=400,
-                    detail="BUY requires symbol",
+                    detail=(
+                        "BUY requires symbol"
+                    ),
                 )
-            buy_symbol(
-                action.symbol,
-                action.weight,
+            executions.append(
+                execute_buy(
+                    action.symbol,
+                    requested_quantity(
+                        symbol=action.symbol,
+                        side="buy",
+                    ),
+                )
             )
+
         elif kind == "SELL":
             if not action.symbol:
                 raise HTTPException(
                     status_code=400,
-                    detail="SELL requires symbol",
+                    detail=(
+                        "SELL requires symbol"
+                    ),
                 )
-            sell_symbol(
-                action.symbol
+            executions.append(
+                execute_sell(
+                    action.symbol,
+                    requested_quantity(
+                        symbol=action.symbol,
+                        side="sell",
+                    ),
+                )
             )
+
+        elif kind == "SET_TARGET":
+            if not action.symbol:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "SET_TARGET requires symbol"
+                    ),
+                )
+            target = (
+                action.target_weight
+                if action.target_weight
+                is not None
+                else action.weight
+            )
+            if target is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "SET_TARGET requires "
+                        "target_weight."
+                    ),
+                )
+            delta = delta_to_target(
+                action.symbol,
+                float(
+                    target
+                ),
+            )
+            if delta > 0:
+                executions.append(
+                    execute_buy(
+                        action.symbol,
+                        delta,
+                    )
+                )
+            elif delta < 0:
+                executions.append(
+                    execute_sell(
+                        action.symbol,
+                        -delta,
+                    )
+                )
+
         elif kind == "SWITCH":
             if (
                 not action.from_symbol
@@ -2206,26 +2866,87 @@ def game_action(
                         "and to_symbol"
                     ),
                 )
-            sell_symbol(
-                action.from_symbol
+            source = (
+                action.from_symbol.upper()
             )
-            buy_symbol(
-                action.to_symbol,
-                action.weight,
+            held = int(
+                game[
+                    "holdings"
+                ].get(
+                    source,
+                    0,
+                )
             )
+            if held <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "No source position in "
+                        f"{source}"
+                    ),
+                )
+
+            sold = execute_sell(
+                source,
+                held,
+            )
+            executions.append(
+                sold
+            )
+
+            destination = (
+                action.to_symbol.upper()
+            )
+            quoted = next_open(
+                destination
+            )
+            redeploy = float(
+                sold[
+                    "trade_value"
+                ]
+            )
+            buy_quantity = int(
+                max(
+                    1,
+                    math.floor(
+                        redeploy
+                        / quoted
+                    ),
+                )
+            )
+            executions.append(
+                execute_buy(
+                    destination,
+                    buy_quantity,
+                )
+            )
+
         elif kind == "LIQUIDATE":
             for symbol in list(
                 game["holdings"]
             ):
-                sell_symbol(
-                    symbol
+                executions.append(
+                    execute_sell(
+                        symbol,
+                        int(
+                            game[
+                                "holdings"
+                            ][
+                                symbol
+                            ]
+                        ),
+                    )
                 )
             game["finished"] = True
+
         elif kind != "HOLD":
             raise HTTPException(
                 status_code=400,
-                detail="Unknown game action",
+                detail=(
+                    "Unknown game action"
+                ),
             )
+
     except HTTPException:
         game["cash"] = (
             cash_before
@@ -2233,47 +2954,79 @@ def game_action(
         game["holdings"] = (
             holdings_before
         )
+        game["average_cost"] = (
+            average_cost_before
+        )
         game["fees"] = (
-            fees_state_before
+            fees_before
         )
         game["turnover"] = (
             turnover_before
         )
+        game["realized_pnl"] = (
+            realized_before
+        )
         raise
 
-    game["history"].append(
-        {
-            "signal_date": (
-                signal_date.strftime(
-                    "%Y-%m-%d"
-                )
-            ),
-            "execution_date": (
-                next_date.strftime(
-                    "%Y-%m-%d"
-                )
-            ),
-            "action": kind,
-            "symbol": action.symbol,
-            "from_symbol": (
-                action.from_symbol
-            ),
-            "to_symbol": (
-                action.to_symbol
-            ),
-            "fees": (
-                game["fees"]
-                - fees_before
-            ),
-        }
-    )
+    game["history"].append({
+        "signal_date": (
+            signal_date.strftime(
+                "%Y-%m-%d"
+            )
+        ),
+        "execution_date": (
+            next_date.strftime(
+                "%Y-%m-%d"
+            )
+        ),
+        "action": kind,
+        "symbol": action.symbol,
+        "from_symbol": (
+            action.from_symbol
+        ),
+        "to_symbol": (
+            action.to_symbol
+        ),
+        "sizing_mode": (
+            action.sizing_mode
+        ),
+        "quantity": (
+            action.quantity
+        ),
+        "amount": action.amount,
+        "fraction": (
+            action.fraction
+        ),
+        "target_weight": (
+            action.target_weight
+        ),
+        "executions": (
+            executions
+        ),
+        "fees": float(
+            game["fees"]
+            - fees_before
+        ),
+        "turnover": float(
+            game["turnover"]
+            - turnover_before
+        ),
+        "realized_pnl": float(
+            game["realized_pnl"]
+            - realized_before
+        ),
+    })
+
     game["position"] += 1
 
     if (
         game["position"]
-        >= len(game["dates"])
+        >= len(
+            game["dates"]
+        )
         - 1
-        and kind != "LIQUIDATE"
+        and kind
+        != "LIQUIDATE"
     ):
         game["finished"] = True
 
