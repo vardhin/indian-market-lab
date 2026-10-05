@@ -370,6 +370,22 @@
     return Number(value).toFixed(digits);
   }
 
+  function fmtDuration(seconds) {
+    if (seconds == null || !Number.isFinite(Number(seconds))) return '—';
+    let value = Math.max(0, Math.round(Number(seconds)));
+    const hours = Math.floor(value / 3600);
+    value %= 3600;
+    const minutes = Math.floor(value / 60);
+    const secs = value % 60;
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${secs}s`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    }
+    return `${secs}s`;
+  }
+
   function defaultsFor(experiment) {
     const next = {};
     for (const p of experiment?.params || []) {
@@ -1339,6 +1355,33 @@
                   {selectedRun.status}
                 </span>
               </div>
+
+              {#if selectedRun.progress}
+                <div class="run-progress">
+                  <div class="run-progress-head">
+                    <span>
+                      {selectedRun.progress.message || selectedRun.progress.phase || 'working'}
+                    </span>
+                    <strong>
+                      {Number(selectedRun.progress.percent || 0).toFixed(2)}%
+                    </strong>
+                  </div>
+                  <div class="run-progress-track">
+                    <div
+                      class="run-progress-fill"
+                      style={`width:${Math.min(100, Math.max(0, Number(selectedRun.progress.percent || 0)))}%`}
+                    ></div>
+                  </div>
+                  <div class="run-progress-foot">
+                    <span>
+                      {selectedRun.progress.detail || ''}
+                    </span>
+                    <span>
+                      ETA {fmtDuration(selectedRun.progress.eta_seconds)}
+                    </span>
+                  </div>
+                </div>
+              {/if}
 
               <div
                 class="btn-row"
