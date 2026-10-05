@@ -18,6 +18,7 @@ from sklearn.ensemble import (
 )
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import SGDClassifier
+from tqdm.auto import tqdm
 
 
 TRAIN_YEARS = [2021, 2022]
@@ -56,8 +57,16 @@ def add_relative_targets(frame: pd.DataFrame) -> pd.DataFrame:
 
 def teacher_diagnostics(teacher: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict] = []
+    grouped = teacher.groupby("state_key", sort=False)
 
-    for state_key, group in teacher.groupby("state_key", sort=False):
+    for state_key, group in tqdm(
+        grouped,
+        total=grouped.ngroups,
+        desc="Teacher diagnostics",
+        unit="state",
+        dynamic_ncols=True,
+        disable=grouped.ngroups < 10,
+    ):
         q = np.sort(
             group["oracle_q"].to_numpy(dtype=float)
         )[::-1]
@@ -143,6 +152,8 @@ def ndcg_at_k(
 def ranking_metrics(
     frame: pd.DataFrame,
     scores: np.ndarray,
+    *,
+    progress_desc: str = "Evaluate ranking",
 ) -> tuple[dict, pd.DataFrame]:
     work = frame[
         [
@@ -161,8 +172,17 @@ def ranking_metrics(
     work["predicted_score"] = np.asarray(scores, dtype=float)
 
     rows: list[dict] = []
+    grouped = work.groupby("state_key", sort=False)
 
-    for state_key, group in work.groupby("state_key", sort=False):
+    for state_key, group in tqdm(
+        grouped,
+        total=grouped.ngroups,
+        desc=progress_desc,
+        unit="state",
+        dynamic_ncols=True,
+        leave=False,
+        disable=grouped.ngroups < 10,
+    ):
         group = group.copy()
         score_values = group["predicted_score"].to_numpy(dtype=float)
         q_values = group["oracle_q"].to_numpy(dtype=float)
@@ -280,8 +300,17 @@ def ranking_metrics(
 
 def random_expected_metrics(frame: pd.DataFrame) -> dict:
     state_rows = []
+    grouped = frame.groupby("state_key", sort=False)
 
-    for _state_key, group in frame.groupby("state_key", sort=False):
+    for _state_key, group in tqdm(
+        grouped,
+        total=grouped.ngroups,
+        desc="Random baseline",
+        unit="state",
+        dynamic_ncols=True,
+        leave=False,
+        disable=grouped.ngroups < 10,
+    ):
         n = len(group)
         q = group["oracle_q"].to_numpy(dtype=float)
         best = float(np.max(q))
@@ -394,6 +423,129 @@ def pairwise_sgd_classifier() -> SGDClassifier:
     )
 
 
+def fit_histgb_with_progress(
+    model,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    desc: str,
+    sample_weight: np.ndarray | None = None,
+    chunk_size: int = 25,
+):
+    total = int(model.max_iter)
+    model.set_params(warm_start=True)
+
+    completed = 0
+    with tqdm(
+        total=total,
+        desc=desc,
+        unit="iter",
+        dynamic_ncols=True,
+        leave=False,
+    ) as bar:
+        while completed < total:
+            target = min(
+                total,
+                completed + int(chunk_size),
+            )
+            model.set_params(max_iter=target)
+            fit_kwargs = {}
+            if sample_weight is not None:
+                fit_kwargs["sample_weight"] = sample_weight
+            model.fit(x, y, **fit_kwargs)
+            bar.update(target - completed)
+            completed = target
+
+    return model
+
+
+def fit_extra_trees_with_progress(
+    model,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    desc: str,
+    sample_weight: np.ndarray | None = None,
+    chunk_size: int = 50,
+):
+    total = int(model.n_estimators)
+    model.set_params(warm_start=True)
+
+    completed = 0
+    with tqdm(
+        total=total,
+        desc=desc,
+        unit="tree",
+        dynamic_ncols=True,
+        leave=False,
+    ) as bar:
+        while completed < total:
+            target = min(
+                total,
+                completed + int(chunk_size),
+            )
+            model.set_params(n_estimators=target)
+            fit_kwargs = {}
+            if sample_weight is not None:
+                fit_kwargs["sample_weight"] = sample_weight
+            model.fit(x, y, **fit_kwargs)
+            bar.update(target - completed)
+            completed = target
+
+    return model
+
+
+def fit_model_with_progress(
+    model,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    desc: str,
+    sample_weight: np.ndarray | None = None,
+):
+    if isinstance(
+        model,
+        (
+            HistGradientBoostingRegressor,
+            HistGradientBoostingClassifier,
+        ),
+    ):
+        return fit_histgb_with_progress(
+            model,
+            x,
+            y,
+            desc=desc,
+            sample_weight=sample_weight,
+        )
+
+    if isinstance(
+        model,
+        ExtraTreesRegressor,
+    ):
+        return fit_extra_trees_with_progress(
+            model,
+            x,
+            y,
+            desc=desc,
+            sample_weight=sample_weight,
+        )
+
+    with tqdm(
+        total=1,
+        desc=desc,
+        unit="fit",
+        dynamic_ncols=True,
+        leave=False,
+    ) as bar:
+        fit_kwargs = {}
+        if sample_weight is not None:
+            fit_kwargs["sample_weight"] = sample_weight
+        model.fit(x, y, **fit_kwargs)
+        bar.update(1)
+
+    return model
+
+
 def find_pairwise_feature_partition(
     train: pd.DataFrame,
     x_train: np.ndarray,
@@ -401,10 +553,22 @@ def find_pairwise_feature_partition(
 ) -> tuple[np.ndarray, np.ndarray]:
     varying = np.zeros(len(features), dtype=bool)
 
-    for indices in train.groupby(
+    grouped = train.groupby(
         "state_key",
         sort=False,
-    ).indices.values():
+    )
+    group_indices = list(
+        grouped.indices.values()
+    )
+
+    for indices in tqdm(
+        group_indices,
+        total=len(group_indices),
+        desc="Partition pairwise features",
+        unit="state",
+        dynamic_ncols=True,
+        leave=False,
+    ):
         idx = np.asarray(indices, dtype=int)
         values = x_train[idx]
         span = np.max(values, axis=0) - np.min(values, axis=0)
@@ -436,7 +600,14 @@ def build_pairwise_training(
     q_all = train["oracle_q"].to_numpy(dtype=float)
     range_all = train["state_q_range"].to_numpy(dtype=float)
 
-    for _state_key, indices in groups.items():
+    for _state_key, indices in tqdm(
+        groups.items(),
+        total=len(groups),
+        desc="Enumerate action pairs",
+        unit="state",
+        dynamic_ncols=True,
+        leave=False,
+    ):
         idx = np.asarray(indices, dtype=int)
         combinations = np.asarray(
             list(itertools.combinations(idx.tolist(), 2)),
@@ -483,7 +654,14 @@ def build_pairwise_training(
 
     context_width = len(context_indices)
 
-    for row_number, (left, right, _dummy) in enumerate(pair_specs):
+    for row_number, (left, right, _dummy) in tqdm(
+        enumerate(pair_specs),
+        total=len(pair_specs),
+        desc="Materialize pair matrix",
+        unit="pair",
+        dynamic_ncols=True,
+        leave=False,
+    ):
         pair_x[
             row_number,
             :context_width,
@@ -527,10 +705,20 @@ def pairwise_scores(
     result = np.zeros(len(frame), dtype=float)
     context_width = len(context_indices)
 
-    for _state_key, indices in frame.groupby(
+    grouped = frame.groupby(
         "state_key",
         sort=False,
-    ).indices.items():
+    )
+    grouped_indices = grouped.indices
+
+    for _state_key, indices in tqdm(
+        grouped_indices.items(),
+        total=len(grouped_indices),
+        desc="Score pairwise validation",
+        unit="state",
+        dynamic_ncols=True,
+        leave=False,
+    ):
         idx = np.asarray(indices, dtype=int)
         if len(idx) == 1:
             result[idx[0]] = 1.0
@@ -698,6 +886,7 @@ def evaluate_teacher(
         metrics, state_frame = ranking_metrics(
             validation,
             scores,
+            progress_desc=f"Evaluate {candidate}",
         )
         leaderboard_rows.append(
             {
@@ -727,6 +916,8 @@ def evaluate_teacher(
                 compression="zstd",
             )
 
+        tournament_bar.update(1)
+
         print(
             f"{candidate:30s} "
             f"rank={metrics['mean_oracle_rank_selected']:.2f} "
@@ -736,11 +927,20 @@ def evaluate_teacher(
             f"rho={metrics['mean_within_state_spearman']:+.3f}"
         )
 
+    tournament_bar = tqdm(
+        total=7,
+        desc="V5 tournament",
+        unit="model",
+        dynamic_ncols=True,
+    )
+
     print("\n--- Absolute-Q baseline ---")
     absolute_model = histgb_regressor()
-    absolute_model.fit(
+    fit_model_with_progress(
+        absolute_model,
         x_train,
         train["oracle_q"].to_numpy(dtype=float),
+        desc="Fit absolute_q_histgb",
     )
     absolute_scores = absolute_model.predict(x_validation)
     record(
@@ -772,9 +972,11 @@ def evaluate_teacher(
     print("\n--- Within-state regret regression ---")
     for name, factory in regression_specs:
         model = factory()
-        model.fit(
+        fit_model_with_progress(
+            model,
             x_train,
             train["oracle_regret"].to_numpy(dtype=float),
+            desc=f"Fit regret_{name}",
         )
         scores = -model.predict(x_validation)
         record(
@@ -793,11 +995,13 @@ def evaluate_teacher(
     print("\n--- Normalized-regret regression ---")
     for name, factory in regression_specs:
         model = factory()
-        model.fit(
+        fit_model_with_progress(
+            model,
             x_train,
             train[
                 "oracle_normalized_regret"
             ].to_numpy(dtype=float),
+            desc=f"Fit normalized_regret_{name}",
         )
         scores = -model.predict(x_validation)
         record(
@@ -855,10 +1059,12 @@ def evaluate_teacher(
 
     for name, factory in pair_specs:
         model = factory()
-        model.fit(
+        fit_model_with_progress(
+            model,
             pair_x,
             pair_y,
             sample_weight=pair_weight,
+            desc=f"Fit pairwise_{name}",
         )
         scores = pairwise_scores(
             validation,
@@ -889,6 +1095,8 @@ def evaluate_teacher(
                 ],
             },
         )
+
+    tournament_bar.close()
 
     leaderboard = pd.DataFrame(leaderboard_rows)
 
