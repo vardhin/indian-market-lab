@@ -36,6 +36,13 @@ export const api = {
     return request(`/api/market/candles?symbol=${encodeURIComponent(symbol)}&year=${year}&interval=${interval}${end}`);
   },
   dashboard: (year = 2023) => request(`/api/dashboard?year=${year}`),
+  actionMatrix: (date = null, model = null) => {
+    const params = new URLSearchParams();
+    if (date) params.set('date', date);
+    if (model) params.set('model', model);
+    const query = params.toString();
+    return request(`/api/action-matrix${query ? `?${query}` : ''}`);
+  },
   reports: () => request('/api/reports'),
   artifact: (path, limit = 1000) => request(`/api/artifact?path=${encodeURIComponent(path)}&limit=${limit}`),
   createGame: (config) => request('/api/game', { method: 'POST', body: JSON.stringify(config) }),
