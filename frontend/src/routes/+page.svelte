@@ -46,11 +46,19 @@
   let game = null;
   let gameMarket = [];
   let gameYear = 2023;
+  let gameStartDate = '';
+  let gameHistoryBars = 260;
   let gameCapital = 50000;
   let gameMaxHoldings = 5;
   let gameSearch = '';
   let gameSelected = 'RELIANCE';
   let switchFrom = '';
+
+  let orderSizingMode = 'shares';
+  let orderQuantity = 1;
+  let orderAmount = 10000;
+  let orderFractionPct = 10;
+  let orderTargetWeightPct = 20;
 
   let toast = null;
   let toastTimer;
@@ -63,6 +71,16 @@
     ? decisions[Math.min(timelineIndex, decisions.length - 1)]
     : null;
   $: markers = buildMarkers();
+  $: selectedPosition =
+    game?.holdings?.find(
+      (holding) =>
+        holding.symbol === gameSelected
+    ) || null;
+  $: selectedMarketRow =
+    gameMarket?.find(
+      (item) =>
+        item.symbol === gameSelected
+    ) || null;
 
   function notify(message, type = 'info') {
     toast = { message, type };
@@ -291,6 +309,9 @@
         interval,
         mode === 'game' && game
           ? game.date
+          : null,
+        mode === 'game' && game
+          ? game.history_bars
           : null
       );
       candles = payload.candles;
@@ -397,6 +418,11 @@
     try {
       game = await api.createGame({
         year: Number(gameYear),
+        start_date:
+          String(gameStartDate || '').trim()
+            || null,
+        history_bars:
+          Number(gameHistoryBars),
         initial_capital:
           Number(gameCapital),
         max_holdings:
@@ -405,6 +431,8 @@
 
       mode = 'game';
       year = game.year;
+      gameStartDate =
+        game.start_date || '';
       timelineIndex = 0;
       await refreshGameMarket();
       await loadCandles();
@@ -469,6 +497,102 @@
     }
   }
 
+  function orderPayload() {
+    if (orderSizingMode === 'shares') {
+      return {
+        sizing_mode: 'shares',
+        quantity: Math.max(
+          1,
+          Number.parseInt(
+            orderQuantity,
+            10
+          ) || 1
+        )
+      };
+    }
+
+    if (orderSizingMode === 'rupees') {
+      return {
+        sizing_mode: 'rupees',
+        amount: Math.max(
+          1,
+          Number(orderAmount) || 1
+        )
+      };
+    }
+
+    if (orderSizingMode === 'equity_fraction') {
+      return {
+        sizing_mode: 'equity_fraction',
+        fraction: Math.min(
+          1,
+          Math.max(
+            0.0001,
+            Number(orderFractionPct)
+            / 100
+          )
+        )
+      };
+    }
+
+    return {
+      sizing_mode: 'target_weight',
+      target_weight: Math.min(
+        1,
+        Math.max(
+          0,
+          Number(orderTargetWeightPct)
+          / 100
+        )
+      )
+    };
+  }
+
+  function buyOrAdd() {
+    if (!gameSelected) return;
+    act(
+      'BUY',
+      {
+        symbol: gameSelected,
+        ...orderPayload()
+      }
+    );
+  }
+
+  function trimOrSell() {
+    if (!gameSelected) return;
+    act(
+      'SELL',
+      {
+        symbol: gameSelected,
+        ...orderPayload()
+      }
+    );
+  }
+
+  function setTargetWeight() {
+    if (!gameSelected) return;
+    act(
+      'SET_TARGET',
+      {
+        symbol: gameSelected,
+        sizing_mode:
+          'target_weight',
+        target_weight:
+          Math.min(
+            1,
+            Math.max(
+              0,
+              Number(
+                orderTargetWeightPct
+              )
+              / 100
+            )
+          )
+      }
+    );
+  }
+
   function switchAction() {
     if (!switchFrom || !gameSelected) {
       return;
@@ -478,13 +602,7 @@
       'SWITCH',
       {
         from_symbol: switchFrom,
-        to_symbol: gameSelected,
-        weight:
-          1
-          / Math.max(
-            1,
-            gameMaxHoldings
-          )
+        to_symbol: gameSelected
       }
     );
   }
@@ -819,6 +937,33 @@
               </div>
             </div>
 
+            <div class="inline-controls">
+              <div class="control">
+                <label>
+                  Start date
+                </label>
+                <input
+                  class="input"
+                  type="date"
+                  bind:value={gameStartDate}
+                />
+              </div>
+
+              <div class="control">
+                <label>
+                  Prior history bars
+                </label>
+                <input
+                  class="input"
+                  type="number"
+                  min="20"
+                  max="2000"
+                  step="20"
+                  bind:value={gameHistoryBars}
+                />
+              </div>
+            </div>
+
             <div class="control">
               <label>
                 Initial capital
@@ -900,28 +1045,149 @@
                 >
                   {gameSelected || '—'}
                 </strong>
+                {#if selectedPosition}
+                  · already holding
+                  <strong
+                    style="color:#76e6aa"
+                  >
+                    {selectedPosition.quantity}
+                    shares
+                  </strong>
+                {/if}
               </div>
 
-              <div class="game-actions">
-                <button
-                  class="btn btn-good"
-                  onclick={() =>
-                    act(
-                      'BUY',
-                      {
-                        symbol:
-                          gameSelected,
-                        weight:
-                          1
-                          / Math.max(
-                            1,
-                            gameMaxHoldings
-                          )
-                      }
-                    )}
+              <div
+                class="tiny mono"
+                style="
+                  padding:7px 8px;
+                  border:1px solid var(--line);
+                  border-radius:6px;
+                  background:#0a0e14;
+                  margin-bottom:9px;
+                  line-height:1.6;
+                "
+              >
+                Minimum order: 1 whole share · no fractional shares
+                {#if selectedMarketRow?.close}
+                  <br />
+                  Close: {fmtMoney(
+                    selectedMarketRow.close
+                  )}
+                  · approx max buy from cash:
+                  {Math.max(
+                    0,
+                    Math.floor(
+                      game.cash
+                      / selectedMarketRow.close
+                    )
+                  )} shares
+                {/if}
+              </div>
+
+              <div class="control">
+                <label>
+                  Sizing mode
+                </label>
+                <select
+                  class="select"
+                  bind:value={orderSizingMode}
                 >
-                  Buy
-                </button>
+                  <option value="shares">
+                    Shares
+                  </option>
+                  <option value="rupees">
+                    ₹ amount
+                  </option>
+                  <option value="equity_fraction">
+                    % of portfolio equity
+                  </option>
+                  <option value="target_weight">
+                    Target portfolio weight
+                  </option>
+                </select>
+              </div>
+
+              {#if orderSizingMode === 'shares'}
+                <div class="control">
+                  <label>
+                    Shares
+                  </label>
+                  <input
+                    class="input"
+                    type="number"
+                    min="1"
+                    step="1"
+                    bind:value={orderQuantity}
+                  />
+                </div>
+              {:else if orderSizingMode === 'rupees'}
+                <div class="control">
+                  <label>
+                    Rupee notional
+                  </label>
+                  <input
+                    class="input"
+                    type="number"
+                    min="1"
+                    step="1000"
+                    bind:value={orderAmount}
+                  />
+                </div>
+              {:else if orderSizingMode === 'equity_fraction'}
+                <div class="control">
+                  <label>
+                    Equity fraction (%)
+                  </label>
+                  <input
+                    class="input"
+                    type="number"
+                    min="0.01"
+                    max="100"
+                    step="1"
+                    bind:value={orderFractionPct}
+                  />
+                </div>
+              {:else}
+                <div class="control">
+                  <label>
+                    Target weight (%)
+                  </label>
+                  <input
+                    class="input"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    bind:value={orderTargetWeightPct}
+                  />
+                </div>
+              {/if}
+
+              <div class="game-actions">
+                {#if orderSizingMode === 'target_weight'}
+                  <button
+                    class="btn btn-good"
+                    onclick={setTargetWeight}
+                  >
+                    Set target
+                  </button>
+                {:else}
+                  <button
+                    class="btn btn-good"
+                    onclick={buyOrAdd}
+                  >
+                    {selectedPosition
+                      ? 'Add / average'
+                      : 'Buy'}
+                  </button>
+
+                  <button
+                    class="btn btn-danger"
+                    onclick={trimOrSell}
+                  >
+                    Trim / sell
+                  </button>
+                {/if}
 
                 <button
                   class="btn"
@@ -935,24 +1201,10 @@
                   class="btn btn-danger"
                   onclick={() =>
                     act(
-                      'SELL',
-                      {
-                        symbol:
-                          gameSelected
-                      }
-                    )}
-                >
-                  Sell
-                </button>
-
-                <button
-                  class="btn btn-danger"
-                  onclick={() =>
-                    act(
                       'LIQUIDATE'
                     )}
                 >
-                  Liquidate
+                  Liquidate all
                 </button>
               </div>
 
@@ -1227,6 +1479,22 @@
             }
           />
 
+          {#if mode === 'game' && game}
+            <MetricCard
+              label="Realized P&L"
+              value={fmtMoney(
+                game.realized_pnl
+              )}
+              tone={
+                game.realized_pnl > 0
+                  ? 'good'
+                  : game.realized_pnl < 0
+                    ? 'bad'
+                    : 'neutral'
+              }
+            />
+          {/if}
+
           <MetricCard
             label="CAGR"
             value={fmtPct(
@@ -1357,20 +1625,64 @@
           {#if mode === 'game' && game}
             {#if game.holdings?.length}
               {#each game.holdings as holding}
-                <div class="holding-row">
+                <button
+                  class="holding-row"
+                  style="
+                    width:100%;
+                    border-left:0;
+                    border-right:0;
+                    border-top:0;
+                    color:inherit;
+                    background:transparent;
+                    text-align:left;
+                    cursor:pointer;
+                  "
+                  onclick={() => {
+                    gameSelected =
+                      holding.symbol;
+                    selectSymbol(
+                      holding.symbol
+                    );
+                  }}
+                >
                   <span>
                     <strong>
                       {holding.symbol}
                     </strong>
                     · {holding.quantity}
-                    @ {holding.price?.toFixed?.(2)}
-                  </span>
-                  <span>
-                    {fmtMoney(
-                      holding.value
+                    sh
+                    · {fmtPct(
+                      holding.weight
                     )}
+                    <br />
+                    <span class="muted">
+                      avg {fmtMoney(
+                        holding.average_cost
+                      )}
+                      · now {fmtMoney(
+                        holding.price
+                      )}
+                      · max add ~{holding.estimated_max_add_shares}
+                    </span>
                   </span>
-                </div>
+                  <span
+                    style={`color:${
+                      holding.unrealized_pnl >= 0
+                        ? '#67dea0'
+                        : '#ff7e89'
+                    }`}
+                  >
+                    {fmtMoney(
+                      holding.unrealized_pnl
+                    )}
+                    <br />
+                    <span class="tiny">
+                      {fmtPct(
+                        holding.unrealized_return
+                      )}
+                    </span>
+                  </span>
+                </button>
               {/each}
             {:else}
               <div class="tiny muted">
