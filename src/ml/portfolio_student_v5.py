@@ -415,7 +415,7 @@ def pairwise_sgd_classifier() -> SGDClassifier:
         penalty="elasticnet",
         alpha=1e-4,
         l1_ratio=0.05,
-        max_iter=12,
+        max_iter=6,
         tol=None,
         random_state=RANDOM_STATE,
         average=True,
@@ -998,6 +998,15 @@ def evaluate_teacher(
         state_results.append(state_frame)
         model_bundles[candidate] = bundle
 
+        candidate_model_path = (
+            model_root / f"{candidate}.joblib"
+        )
+        joblib.dump(
+            bundle,
+            candidate_model_path,
+            compress=3,
+        )
+
         # Persist every completed candidate immediately so an interrupted
         # long-running model never destroys already-finished evidence.
         pd.DataFrame(leaderboard_rows).to_csv(
@@ -1143,7 +1152,7 @@ def evaluate_teacher(
 
     if pairwise_selected:
         print("\n--- Pairwise ranking ---")
-            context_indices, varying_indices = (
+        context_indices, varying_indices = (
             find_pairwise_feature_partition(
                 train,
                 x_train,
@@ -1290,28 +1299,50 @@ def evaluate_teacher(
     best_candidate = str(
         learned.iloc[0]["candidate"]
     )
-    best_bundle = model_bundles[best_candidate]
-    best_bundle.update(
-        {
-            "candidate": best_candidate,
-            "train_years": TRAIN_YEARS,
-            "validation_years": VALIDATION_YEARS,
-            "selection_rule": (
-                "lowest 2023 mean normalized regret; then "
-                "mean action regret; mean selected oracle rank; "
-                "higher top-5 hit rate; higher within-state Spearman"
-            ),
-        }
+    selection_rule = (
+        "lowest 2023 mean normalized regret; then "
+        "mean action regret; mean selected oracle rank; "
+        "higher top-5 hit rate; higher within-state Spearman"
     )
+
+    best_bundle = model_bundles.get(
+        best_candidate
+    )
+    candidate_checkpoint = (
+        model_root / f"{best_candidate}.joblib"
+    )
+    if (
+        best_bundle is None
+        and candidate_checkpoint.is_file()
+    ):
+        best_bundle = joblib.load(
+            candidate_checkpoint
+        )
 
     model_path = (
         model_root / "development_best.joblib"
     )
-    joblib.dump(
-        best_bundle,
-        model_path,
-        compress=3,
-    )
+
+    if best_bundle is not None:
+        best_bundle.update(
+            {
+                "candidate": best_candidate,
+                "train_years": TRAIN_YEARS,
+                "validation_years": VALIDATION_YEARS,
+                "selection_rule": selection_rule,
+            }
+        )
+        joblib.dump(
+            best_bundle,
+            model_path,
+            compress=3,
+        )
+    else:
+        print(
+            "Best candidate model bundle is not checkpointed yet: "
+            f"{best_candidate}. Leaderboard is complete; rerun only "
+            "that candidate later if its deployable model is needed."
+        )
 
     diagnostics_summary = {
         "states": int(len(diagnostics)),
@@ -1344,24 +1375,34 @@ def evaluate_teacher(
         "validation_years": VALIDATION_YEARS,
         "feature_count": len(features),
         "identity_features": [],
-        "pairwise_context_feature_count": int(
-            len(context_indices)
+        "pairwise_context_feature_count": (
+            int(len(context_indices))
+            if pairwise_selected
+            else None
         ),
-        "pairwise_varying_feature_count": int(
-            len(varying_indices)
+        "pairwise_varying_feature_count": (
+            int(len(varying_indices))
+            if pairwise_selected
+            else None
         ),
-        "pairwise_training_rows": int(
-            len(pair_x)
+        "pairwise_training_rows": (
+            int(len(pair_x))
+            if pairwise_selected
+            else None
         ),
         "max_pairs_per_state": int(
             max_pairs_per_state
         ),
         "teacher_diagnostics": diagnostics_summary,
         "random_expected": random_metrics,
-        "selection_rule": best_bundle["selection_rule"],
+        "selection_rule": selection_rule,
         "best_candidate": best_candidate,
         "best_metrics": learned.iloc[0].to_dict(),
-        "model_path": str(model_path),
+        "model_path": (
+            str(model_path)
+            if model_path.is_file()
+            else None
+        ),
         "confirmation_rule": (
             "Do not use 2024-2026 oracle labels or retune on "
             "2024-2026 until the development policy and action-search "
@@ -1397,7 +1438,14 @@ def evaluate_teacher(
         ].to_string(index=False)
     )
     print(f"\nBest candidate: {best_candidate}")
-    print(f"Model: {model_path}")
+    print(
+        "Model: "
+        + (
+            str(model_path)
+            if model_path.is_file()
+            else "not materialized in this resume run"
+        )
+    )
     print(f"Reports: {report_root}")
 
     return summary
