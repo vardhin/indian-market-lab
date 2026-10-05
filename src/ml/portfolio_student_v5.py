@@ -17,6 +17,7 @@ from sklearn.ensemble import (
     HistGradientBoostingRegressor,
 )
 from sklearn.impute import SimpleImputer
+from sklearn.linear_model import SGDClassifier
 
 
 TRAIN_YEARS = [2021, 2022]
@@ -379,18 +380,17 @@ def histgb_classifier() -> HistGradientBoostingClassifier:
     )
 
 
-def extra_trees_classifier(
-    *,
-    n_jobs: int,
-) -> ExtraTreesClassifier:
-    return ExtraTreesClassifier(
-        n_estimators=400,
-        max_depth=18,
-        min_samples_leaf=8,
-        max_features=0.6,
+def pairwise_sgd_classifier() -> SGDClassifier:
+    return SGDClassifier(
+        loss="log_loss",
+        penalty="elasticnet",
+        alpha=1e-4,
+        l1_ratio=0.05,
+        max_iter=250,
+        tol=1e-4,
         class_weight="balanced",
         random_state=RANDOM_STATE,
-        n_jobs=n_jobs,
+        average=True,
     )
 
 
@@ -671,6 +671,13 @@ def evaluate_teacher(
     model_bundles: dict[str, dict] = {}
 
     random_metrics = random_expected_metrics(validation)
+    print(
+        "\nRandom expected: "
+        f"rank={random_metrics['mean_oracle_rank_selected']:.2f} "
+        f"top5={random_metrics['top5_hit_fraction']:.1%} "
+        f"regret={random_metrics['mean_action_regret']:.5f} "
+        f"norm={random_metrics['mean_normalized_regret']:.3f}"
+    )
     leaderboard_rows.append(
         {
             "candidate": "random_expected",
@@ -703,6 +710,22 @@ def evaluate_teacher(
         state_frame["candidate"] = candidate
         state_results.append(state_frame)
         model_bundles[candidate] = bundle
+
+        # Persist every completed candidate immediately so an interrupted
+        # long-running model never destroys already-finished evidence.
+        pd.DataFrame(leaderboard_rows).to_csv(
+            report_root / "leaderboard_partial.csv",
+            index=False,
+        )
+        if state_results:
+            pd.concat(
+                state_results,
+                ignore_index=True,
+            ).to_parquet(
+                report_root / "state_ranking_results_partial.parquet",
+                index=False,
+                compression="zstd",
+            )
 
         print(
             f"{candidate:30s} "
@@ -825,10 +848,8 @@ def evaluate_teacher(
             histgb_classifier,
         ),
         (
-            "extra_trees",
-            lambda: extra_trees_classifier(
-                n_jobs=n_jobs,
-            ),
+            "sgd_logistic",
+            pairwise_sgd_classifier,
         ),
     ]
 
