@@ -37,14 +37,91 @@ HEADERS = {
 # official workbook URLs as discovery fallbacks so a missing half-year
 # can never silently stretch the previous PIT classification forward.
 KNOWN_OFFICIAL_WORKBOOKS = {
+    pd.Timestamp("2017-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Avg.%20Market%20Capitalization%20of%20listed%20companies%20"
+        "during%20-Jul-Dec%202017.xlsx"
+    ),
+    pd.Timestamp("2018-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Avg.%20Market%20Capitalization%20of%20listed%20companies%20"
+        "during%20-Jan-June%202018.xlsx"
+    ),
+    pd.Timestamp("2018-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Avg.%20Market%20Capitalization%20of%20listed%20companies%20"
+        "during%20Jul-Dec%202018.xlsx"
+    ),
+    pd.Timestamp("2019-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Avg.%20Market%20Capitalization%20of%20listed%20companies%20"
+        "during%20-Jan-June%202019.xlsx"
+    ),
+    pd.Timestamp("2019-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Avg.%20Market%20Capitalization%20of%20listed%20companies%20"
+        "during%20Jul-Dec%202019.xlsx"
+    ),
+    pd.Timestamp("2020-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Average%20Market%20Capitalization%20of%20Listed%20Companies%20"
+        "during%20Jan%20-%20Jun%202020_Final.xlsx"
+    ),
     pd.Timestamp("2020-12-31"): (
         "https://www.amfiindia.com/Themes/Theme1/downloads/"
         "Average%20Market%20Capitalization%20of%20Listed%20Companies%20"
         "during%20Jul%20-%20Dec%202020_Final.xlsx"
     ),
+    pd.Timestamp("2021-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Average%20Market%20Capitalization%20of%20List%20Companies%20"
+        "during%20Jan-June%202021.xlsx"
+    ),
+    pd.Timestamp("2021-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "Average%20Market%20Capitalisation%20of%20Listed%20Companies%20"
+        "during%20Jul%20-%20Dec%202021.xlsx"
+    ),
+    pd.Timestamp("2022-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalizationoflistedcompaniesduringthesixmonths"
+        "ended30June2022.xlsx"
+    ),
+    pd.Timestamp("2022-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalizationoflistedcompaniesduringthesixmonths"
+        "ended31Dec2022.xlsx"
+    ),
+    pd.Timestamp("2023-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalizationoflistedcompaniesduringthesixmonths"
+        "ended30Jun2023.xlsx"
+    ),
+    pd.Timestamp("2023-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalizationoflistedcompaniesduringthesixmonths"
+        "ended31Dec2023.xlsx"
+    ),
     pd.Timestamp("2024-06-30"): (
         "https://www.amfiindia.com/uploads/"
         "Average_Market_Capitalization_30_Jun2024_2a1ab4c1d8.xlsx"
+    ),
+    pd.Timestamp("2024-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalizationoflistedcompaniesduringthesixmonths"
+        "ended31Dec2024.xlsx"
+    ),
+    pd.Timestamp("2025-06-30"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalization30Jun2025.xlsx"
+    ),
+    pd.Timestamp("2025-12-31"): (
+        "https://www.amfiindia.com/Themes/Theme1/downloads/"
+        "AverageMarketCapitalization31Dec2025.xlsx"
+    ),
+    pd.Timestamp("2026-06-30"): (
+        "https://portal.amfiindia.com/spages/"
+        "AverageMarketCapitalization30Jun2026.xlsx"
     ),
 }
 
@@ -1158,11 +1235,21 @@ def build_archive(
             "Discovering AMFI historical "
             "market-cap workbooks..."
         )
-        urls = discover_excel_urls()
 
-        # Add exact official AMFI fallbacks for historical anchors
-        # that have been observed to disappear from simple HTTP
-        # discovery even though they remain listed on the archive page.
+        try:
+            urls = discover_excel_urls()
+        except Exception as exc:
+            print(
+                "  archive-page discovery failed; "
+                "using verified official workbook "
+                f"fallbacks ({exc!r})",
+                flush=True,
+            )
+            urls = []
+
+        # Keep a complete authoritative fallback set because AMFI's
+        # archive page and file hosts intermittently reject non-browser
+        # clients even while the official workbook URLs remain valid.
         urls.extend(
             KNOWN_OFFICIAL_WORKBOOKS.values()
         )
