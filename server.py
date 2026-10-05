@@ -1690,6 +1690,14 @@ def _game_snapshot(
         if downside_vol > 0
         else None
     )
+    calmar = (
+        cagr
+        / abs(
+            max_drawdown
+        )
+        if max_drawdown < 0
+        else None
+    )
 
     return {
         "id": game["id"],
@@ -1718,6 +1726,27 @@ def _game_snapshot(
             "sortino": sortino,
             "max_drawdown": (
                 max_drawdown
+            ),
+            "calmar": calmar,
+            "annualized_volatility": (
+                volatility
+            ),
+            "turnover_multiple": (
+                float(
+                    game.get(
+                        "turnover",
+                        0.0,
+                    )
+                )
+                / float(
+                    game[
+                        "initial_capital"
+                    ]
+                )
+                if game[
+                    "initial_capital"
+                ] > 0
+                else None
             ),
             "total_return": (
                 equity
@@ -1786,6 +1815,7 @@ def create_game(
         ),
         "holdings": {},
         "fees": 0.0,
+        "turnover": 0.0,
         "history": [],
         "equity": [],
         "last_prices": {},
@@ -1923,6 +1953,11 @@ def game_action(
         game["fees"] += float(
             execution["fees"]
         )
+        game["turnover"] += float(
+            execution[
+                "trade_value"
+            ]
+        )
         game["holdings"].pop(
             symbol,
             None,
@@ -2059,6 +2094,11 @@ def game_action(
         game["fees"] += float(
             execution["fees"]
         )
+        game["turnover"] += float(
+            execution[
+                "trade_value"
+            ]
+        )
         game["holdings"][
             symbol
         ] = float(
@@ -2073,6 +2113,12 @@ def game_action(
     )
     fees_state_before = float(
         game["fees"]
+    )
+    turnover_before = float(
+        game.get(
+            "turnover",
+            0.0,
+        )
     )
 
     try:
@@ -2136,6 +2182,9 @@ def game_action(
         )
         game["fees"] = (
             fees_state_before
+        )
+        game["turnover"] = (
+            turnover_before
         )
         raise
 
