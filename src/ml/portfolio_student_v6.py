@@ -866,6 +866,14 @@ def fit_xgb_ranker(
     finally:
         bar.close()
 
+    # The progress callback closes over a tqdm object and is intentionally
+    # local to this training call. Strip it after fitting so the trained
+    # XGBRanker is safely serializable with joblib.
+    model.set_params(
+        callbacks=None,
+    )
+    model.callbacks = None
+
     return model
 
 
@@ -1213,13 +1221,9 @@ def evaluate(
             candidate
         ] = bundle
 
-        joblib.dump(
-            bundle,
-            model_root
-            / f"{candidate}.joblib",
-            compress=3,
-        )
-
+        # Metrics/state evidence are more important than model persistence.
+        # Checkpoint them first so a serialization problem can never erase
+        # a completed experiment.
         pd.DataFrame(
             leaderboard_rows
         ).drop_duplicates(
@@ -1246,6 +1250,22 @@ def evaluate(
             index=False,
             compression="zstd",
         )
+
+        candidate_model_path = (
+            model_root
+            / f"{candidate}.joblib"
+        )
+        try:
+            joblib.dump(
+                bundle,
+                candidate_model_path,
+                compress=3,
+            )
+        except Exception as exc:
+            print(
+                "\nWARNING: metrics were checkpointed, but model "
+                f"serialization failed for {candidate}: {exc}"
+            )
 
         tournament_bar.update(
             1
