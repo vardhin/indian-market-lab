@@ -3157,9 +3157,9 @@ def game_market(
     game_id: str,
     query: str = "",
     limit: int = Query(
-        50,
+        5000,
         ge=1,
-        le=500,
+        le=5000,
     ),
 ) -> list[dict[str, Any]]:
     game = GAMES.get(
