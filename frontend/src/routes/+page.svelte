@@ -1969,6 +1969,86 @@
             />
           {/if}
 
+          {#if mode === 'game' && game}
+            <MetricCard
+              label="Cash / balance"
+              value={fmtMoney(
+                game.cash
+              )}
+              detail={`${fmtPct(
+                game.cash_fraction
+              )} of equity free`}
+            />
+
+            <MetricCard
+              label="Invested"
+              value={fmtMoney(
+                game.invested_value
+              )}
+              detail={`${fmtPct(
+                1 - game.cash_fraction
+              )} deployed`}
+            />
+
+            <MetricCard
+              label="Elapsed"
+              value={`${game.elapsed_calendar_days} days`}
+              detail={`${game.elapsed_sessions} market sessions`}
+            />
+
+            <MetricCard
+              label="Avg daily"
+              value={fmtPct(
+                metrics.average_daily_return,
+                3
+              )}
+              tone={
+                metrics.average_daily_return > 0
+                  ? 'good'
+                  : metrics.average_daily_return < 0
+                    ? 'bad'
+                    : 'neutral'
+              }
+            />
+
+            <MetricCard
+              label="Win rate"
+              value={fmtPct(
+                metrics.realized_win_rate
+              )}
+              detail={`${game.exit_count || 0} realized exits`}
+            />
+
+            <MetricCard
+              label="Avg P&L / exit"
+              value={fmtMoney(
+                metrics.average_realized_pnl_per_exit
+              )}
+              tone={
+                metrics.average_realized_pnl_per_exit > 0
+                  ? 'good'
+                  : metrics.average_realized_pnl_per_exit < 0
+                    ? 'bad'
+                    : 'neutral'
+              }
+            />
+
+            <MetricCard
+              label="Avg fee / order"
+              value={fmtMoney(
+                metrics.average_fee_per_order
+              )}
+              detail={`${game.order_count || 0} executed orders`}
+            />
+
+            <MetricCard
+              label="Avg order"
+              value={fmtMoney(
+                metrics.average_order_value
+              )}
+            />
+          {/if}
+
           <MetricCard
             label="CAGR"
             value={fmtPct(
