@@ -1573,6 +1573,180 @@ def action_features(
     return features
 
 
+def select_teacher_samples(
+    samples: list[dict],
+    *,
+    count: int,
+    strategy: str,
+) -> list[dict]:
+    ranked = sorted(
+        samples,
+        key=lambda row: float(
+            row["fitness"]
+        ),
+        reverse=True,
+    )
+
+    if count <= 0:
+        raise ValueError(
+            "Teacher sample count must be positive."
+        )
+
+    if strategy == "top":
+        selected = ranked[
+            : min(
+                count,
+                len(ranked),
+            )
+        ]
+        return [
+            {
+                **sample,
+                "_teacher_bucket": "top",
+                "_pool_rank": rank,
+                "_pool_size": len(ranked),
+            }
+            for rank, sample
+            in enumerate(
+                selected,
+                start=1,
+            )
+        ]
+
+    if strategy != "quartile":
+        raise ValueError(
+            "Unknown teacher sampling strategy: "
+            f"{strategy}. Use top or quartile."
+        )
+
+    if not ranked:
+        return []
+
+    pool_indices = np.arange(
+        len(ranked),
+        dtype=int,
+    )
+    quartiles = np.array_split(
+        pool_indices,
+        4,
+    )
+    labels = [
+        "elite",
+        "upper_mid",
+        "lower_mid",
+        "broad",
+    ]
+
+    base = count // 4
+    remainder = count % 4
+    chosen: list[tuple[int, str]] = []
+    used: set[int] = set()
+
+    for quartile_index, indices in enumerate(
+        quartiles
+    ):
+        if len(indices) == 0:
+            continue
+
+        target_count = (
+            base
+            + (
+                1
+                if quartile_index < remainder
+                else 0
+            )
+        )
+        target_count = min(
+            target_count,
+            len(indices),
+        )
+        if target_count <= 0:
+            continue
+
+        positions = np.linspace(
+            0,
+            len(indices) - 1,
+            num=target_count,
+        ).round().astype(int)
+
+        for position in positions:
+            pool_index = int(
+                indices[
+                    position
+                ]
+            )
+            if pool_index in used:
+                continue
+            used.add(
+                pool_index
+            )
+            chosen.append(
+                (
+                    pool_index,
+                    labels[
+                        quartile_index
+                    ],
+                )
+            )
+
+    target_total = min(
+        count,
+        len(ranked),
+    )
+
+    if len(chosen) < target_total:
+        for pool_index in range(
+            len(ranked)
+        ):
+            if pool_index in used:
+                continue
+
+            quartile_index = min(
+                3,
+                int(
+                    4
+                    * pool_index
+                    / max(
+                        1,
+                        len(ranked),
+                    )
+                ),
+            )
+            chosen.append(
+                (
+                    pool_index,
+                    labels[
+                        quartile_index
+                    ],
+                )
+            )
+            used.add(
+                pool_index
+            )
+            if len(chosen) >= target_total:
+                break
+
+    chosen.sort(
+        key=lambda item: item[0]
+    )
+
+    return [
+        {
+            **ranked[
+                pool_index
+            ],
+            "_teacher_bucket": bucket,
+            "_pool_rank": (
+                pool_index
+                + 1
+            ),
+            "_pool_size": len(ranked),
+        }
+        for pool_index, bucket
+        in chosen
+    ]
+
+
 def execute_first_action(
     state: dict,
     *,
@@ -1632,6 +1806,10 @@ def build_oracle(
     engine: str = "cpu",
     device: str = "cuda",
     gpu_finalists: int = 128,
+    teacher_pool_per_state: int | None = None,
+    teacher_sampling: str = "top",
+    cuda_finalist_strategy: str = "top",
+    output_namespace: str = "portfolio_oracle_v4",
 ) -> dict:
     panel = load_panel(
         root,
@@ -1717,7 +1895,7 @@ def build_oracle(
     output_root = (
         root
         / "data/processed/"
-        "portfolio_oracle_v4"
+        / output_namespace
     )
     output_root.mkdir(
         parents=True,
@@ -1726,7 +1904,7 @@ def build_oracle(
     report_root = (
         root
         / "reports/ml/"
-        "portfolio_oracle_v4"
+        / output_namespace
         / "development"
     )
     report_root.mkdir(
@@ -1811,7 +1989,7 @@ def build_oracle(
         ),
     )
     progress = ProgressReporter(
-        phase="portfolio_oracle_v4",
+        phase=output_namespace,
         total=total_work,
     )
     progress.update(
@@ -1944,7 +2122,17 @@ def build_oracle(
                     iterations=iterations,
                     restarts=restarts,
                     samples_per_state=(
-                        samples_per_state
+                        max(
+                            int(
+                                samples_per_state
+                            ),
+                            int(
+                                teacher_pool_per_state
+                                if teacher_pool_per_state
+                                is not None
+                                else samples_per_state
+                            ),
+                        )
                     ),
                     costs=costs,
                     drawdown_penalty=(
@@ -1964,6 +2152,9 @@ def build_oracle(
                     ),
                     gpu_finalists=(
                         gpu_finalists
+                    ),
+                    finalist_strategy=(
+                        cuda_finalist_strategy
                     ),
                     exact_simulate=(
                         simulate_plan
@@ -1993,7 +2184,17 @@ def build_oracle(
                         iterations=iterations,
                         restarts=restarts,
                         samples_per_state=(
-                            samples_per_state
+                            max(
+                            int(
+                                samples_per_state
+                            ),
+                            int(
+                                teacher_pool_per_state
+                                if teacher_pool_per_state
+                                is not None
+                                else samples_per_state
+                            ),
+                        )
                         ),
                         costs=costs,
                         drawdown_penalty=(
@@ -2014,14 +2215,14 @@ def build_oracle(
                     )
                 )
 
-            ranked_samples = sorted(
+            ranked_samples = select_teacher_samples(
                 samples,
-                key=lambda row: float(
-                    row[
-                        "fitness"
-                    ]
+                count=int(
+                    samples_per_state
                 ),
-                reverse=True,
+                strategy=(
+                    teacher_sampling
+                ),
             )
 
             state_key = (
@@ -2092,6 +2293,26 @@ def build_oracle(
                     "meta_target_signature": (
                         target_signature(
                             target
+                        )
+                    ),
+                    "meta_teacher_bucket": str(
+                        sample.get(
+                            "_teacher_bucket",
+                            "top",
+                        )
+                    ),
+                    "meta_pool_rank": int(
+                        sample.get(
+                            "_pool_rank",
+                            rank,
+                        )
+                    ),
+                    "meta_pool_size": int(
+                        sample.get(
+                            "_pool_size",
+                            len(
+                                ranked_samples
+                            ),
                         )
                     ),
                 }
@@ -2315,6 +2536,25 @@ def build_oracle(
         "samples_per_state": int(
             samples_per_state
         ),
+        "teacher_pool_per_state": int(
+            teacher_pool_per_state
+            if teacher_pool_per_state
+            is not None
+            else samples_per_state
+        ),
+        "teacher_sampling": str(
+            teacher_sampling
+        ),
+        "cuda_finalist_strategy": (
+            str(
+                cuda_finalist_strategy
+            )
+            if engine == "torch-cuda"
+            else None
+        ),
+        "output_namespace": str(
+            output_namespace
+        ),
         "engine": str(
             engine
         ),
@@ -2530,6 +2770,45 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--teacher-pool-per-state",
+        type=int,
+        default=None,
+        help=(
+            "Exact-rescored candidate pool retained from search before "
+            "downsampling to --samples-per-state teacher rows."
+        ),
+    )
+    ap.add_argument(
+        "--teacher-sampling",
+        choices=[
+            "top",
+            "quartile",
+        ],
+        default="top",
+        help=(
+            "How to select stored teacher actions from the exact-rescored "
+            "candidate pool."
+        ),
+    )
+    ap.add_argument(
+        "--cuda-finalist-strategy",
+        choices=[
+            "top",
+            "stratified",
+        ],
+        default="top",
+        help=(
+            "Which CUDA particle-best plans are exactly CPU-rescored."
+        ),
+    )
+    ap.add_argument(
+        "--output-namespace",
+        default="portfolio_oracle_v4",
+        help=(
+            "Output folder namespace under data/processed and reports/ml."
+        ),
+    )
+    ap.add_argument(
         "--capital",
         type=float,
         default=50_000.0,
@@ -2626,6 +2905,26 @@ def main() -> None:
         raise SystemExit(
             "--gpu-finalists must be positive"
         )
+    if (
+        args.teacher_pool_per_state
+        is not None
+        and args.teacher_pool_per_state
+        < args.samples_per_state
+    ):
+        raise SystemExit(
+            "--teacher-pool-per-state must be >= --samples-per-state"
+        )
+    if (
+        args.teacher_pool_per_state
+        is not None
+        and args.engine == "torch-cuda"
+        and args.gpu_finalists
+        < args.teacher_pool_per_state
+    ):
+        raise SystemExit(
+            "--gpu-finalists must be >= --teacher-pool-per-state "
+            "for CUDA teacher pooling"
+        )
 
     root = Path(
         args.root
@@ -2689,6 +2988,23 @@ def main() -> None:
         ),
         gpu_finalists=int(
             args.gpu_finalists
+        ),
+        teacher_pool_per_state=(
+            int(
+                args.teacher_pool_per_state
+            )
+            if args.teacher_pool_per_state
+            is not None
+            else None
+        ),
+        teacher_sampling=str(
+            args.teacher_sampling
+        ),
+        cuda_finalist_strategy=str(
+            args.cuda_finalist_strategy
+        ),
+        output_namespace=str(
+            args.output_namespace
         ),
     )
 
