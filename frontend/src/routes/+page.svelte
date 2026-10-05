@@ -1520,7 +1520,7 @@
         {showVolume}
         {showGrid}
         {markers}
-        height={520}
+        fill={true}
       />
 
       <div class="chart-footer">
