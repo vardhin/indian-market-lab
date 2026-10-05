@@ -1996,6 +1996,139 @@ def _game_snapshot(
         else None
     )
 
+    elapsed_calendar_days = int(
+        max(
+            0,
+            (
+                date
+                - pd.Timestamp(
+                    dates[
+                        game[
+                            "start_position"
+                        ]
+                    ]
+                )
+            ).days,
+        )
+    )
+    elapsed_sessions = int(
+        max(
+            0,
+            index
+            - game[
+                "start_position"
+            ],
+        )
+    )
+    average_daily_return = (
+        float(
+            returns.mean()
+        )
+        if len(
+            returns
+        )
+        else 0.0
+    )
+
+    execution_legs = [
+        execution
+        for event
+        in game[
+            "history"
+        ]
+        for execution
+        in event.get(
+            "executions",
+            [],
+        )
+    ]
+    sell_legs = [
+        execution
+        for execution
+        in execution_legs
+        if execution.get(
+            "side"
+        )
+        == "SELL"
+    ]
+    realized_results = [
+        float(
+            execution.get(
+                "realized_pnl",
+                0.0,
+            )
+        )
+        for execution
+        in sell_legs
+    ]
+    profitable_exits = sum(
+        result > 0
+        for result
+        in realized_results
+    )
+
+    order_count = int(
+        len(
+            execution_legs
+        )
+    )
+    exit_count = int(
+        len(
+            realized_results
+        )
+    )
+    average_fee_per_order = (
+        float(
+            game[
+                "fees"
+            ]
+        )
+        / order_count
+        if order_count > 0
+        else 0.0
+    )
+    average_order_value = (
+        float(
+            game.get(
+                "turnover",
+                0.0,
+            )
+        )
+        / order_count
+        if order_count > 0
+        else 0.0
+    )
+    average_realized_pnl = (
+        float(
+            np.mean(
+                realized_results
+            )
+        )
+        if realized_results
+        else 0.0
+    )
+    realized_win_rate = (
+        float(
+            profitable_exits
+            / exit_count
+        )
+        if exit_count > 0
+        else None
+    )
+    invested_value = float(
+        holdings_value
+    )
+    cash_fraction = (
+        float(
+            game[
+                "cash"
+            ]
+        )
+        / equity
+        if equity > 0
+        else 0.0
+    )
+
     return {
         "id": game["id"],
         "year": game["year"],
@@ -2047,7 +2180,28 @@ def _game_snapshot(
         "cash": float(
             game["cash"]
         ),
+        "buying_power": float(
+            game["cash"]
+        ),
+        "invested_value": (
+            invested_value
+        ),
+        "cash_fraction": (
+            cash_fraction
+        ),
         "equity": equity,
+        "elapsed_calendar_days": (
+            elapsed_calendar_days
+        ),
+        "elapsed_sessions": (
+            elapsed_sessions
+        ),
+        "order_count": (
+            order_count
+        ),
+        "exit_count": (
+            exit_count
+        ),
         "fees": float(
             game["fees"]
         ),
@@ -2081,6 +2235,21 @@ def _game_snapshot(
             "calmar": calmar,
             "annualized_volatility": (
                 volatility
+            ),
+            "average_daily_return": (
+                average_daily_return
+            ),
+            "average_fee_per_order": (
+                average_fee_per_order
+            ),
+            "average_order_value": (
+                average_order_value
+            ),
+            "average_realized_pnl_per_exit": (
+                average_realized_pnl
+            ),
+            "realized_win_rate": (
+                realized_win_rate
             ),
             "turnover_multiple": (
                 float(
