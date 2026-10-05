@@ -1629,6 +1629,9 @@ def build_oracle(
     costs: CostProfile,
     drawdown_penalty: float,
     max_decision_days: int | None,
+    engine: str = "cpu",
+    device: str = "cuda",
+    gpu_finalists: int = 128,
 ) -> dict:
     panel = load_panel(
         root,
@@ -1671,6 +1674,45 @@ def build_oracle(
         )
         for index in market_indices
     }
+
+    torch_cache = None
+    cuda_search = None
+
+    if engine == "torch-cuda":
+        from portfolio_oracle_cuda import (
+            build_torch_market_cache,
+            pso_search_cuda,
+        )
+
+        torch_cache = build_torch_market_cache(
+            panel=panel,
+            day_groups=day_groups,
+            market_indices=market_indices,
+            candidates_by_index=(
+                candidates_by_index
+            ),
+            events_by_index=(
+                events_by_index
+            ),
+            device=device,
+        )
+        cuda_search = pso_search_cuda
+
+        try:
+            import torch
+
+            print(
+                "CUDA oracle engine: "
+                f"{torch.cuda.get_device_name(torch.device(device))}",
+                flush=True,
+            )
+        except Exception:
+            pass
+    elif engine != "cpu":
+        raise ValueError(
+            "Unknown oracle engine: "
+            f"{engine}. Use cpu or torch-cuda."
+        )
 
     output_root = (
         root
@@ -1860,18 +1902,43 @@ def build_oracle(
             ):
                 continue
 
-            best, samples = (
-                pso_search(
-                    initial_state=state,
-                    market_indices=window,
-                    day_groups=day_groups,
-                    panel=panel,
-                    events_by_index=(
+            progress_message = (
+                f"state "
+                f"{processed_days + 1}/"
+                f"{total_decisions} · "
+                f"{signal_date.date()}"
+            )
+
+            if engine == "torch-cuda":
+                assert (
+                    torch_cache
+                    is not None
+                    and cuda_search
+                    is not None
+                )
+
+                exact_kwargs = {
+                    "initial_state": state,
+                    "market_indices": window,
+                    "day_groups": day_groups,
+                    "panel": panel,
+                    "events_by_index": (
                         events_by_index
                     ),
-                    candidates_by_index=(
+                    "candidates_by_index": (
                         candidates_by_index
                     ),
+                    "slots": slots,
+                    "costs": costs,
+                    "drawdown_penalty": (
+                        drawdown_penalty
+                    ),
+                }
+
+                best, samples = cuda_search(
+                    initial_state=state,
+                    market_indices=window,
+                    cache=torch_cache,
                     slots=slots,
                     particles=particles,
                     iterations=iterations,
@@ -1893,13 +1960,59 @@ def build_oracle(
                         * work_per_decision
                     ),
                     progress_message=(
-                        f"state "
-                        f"{processed_days + 1}/"
-                        f"{total_decisions} · "
-                        f"{signal_date.date()}"
+                        progress_message
+                    ),
+                    gpu_finalists=(
+                        gpu_finalists
+                    ),
+                    exact_simulate=(
+                        simulate_plan
+                    ),
+                    exact_kwargs=(
+                        exact_kwargs
+                    ),
+                    target_signature=(
+                        target_signature
                     ),
                 )
-            )
+            else:
+                best, samples = (
+                    pso_search(
+                        initial_state=state,
+                        market_indices=window,
+                        day_groups=day_groups,
+                        panel=panel,
+                        events_by_index=(
+                            events_by_index
+                        ),
+                        candidates_by_index=(
+                            candidates_by_index
+                        ),
+                        slots=slots,
+                        particles=particles,
+                        iterations=iterations,
+                        restarts=restarts,
+                        samples_per_state=(
+                            samples_per_state
+                        ),
+                        costs=costs,
+                        drawdown_penalty=(
+                            drawdown_penalty
+                        ),
+                        random_state=(
+                            RANDOM_STATE
+                            + signal_index
+                        ),
+                        progress=progress,
+                        progress_offset=(
+                            processed_days
+                            * work_per_decision
+                        ),
+                        progress_message=(
+                            progress_message
+                        ),
+                    )
+                )
 
             ranked_samples = sorted(
                 samples,
@@ -2202,6 +2315,24 @@ def build_oracle(
         "samples_per_state": int(
             samples_per_state
         ),
+        "engine": str(
+            engine
+        ),
+        "device": str(
+            device
+        ),
+        "gpu_finalists": int(
+            gpu_finalists
+        )
+        if engine == "torch-cuda"
+        else None,
+        "cuda_fidelity": (
+            "GPU float32 PSO proposal search; all retained finalist plans "
+            "are rescored by the original CPU simulator before teacher Q "
+            "values and oracle actions are recorded."
+            if engine == "torch-cuda"
+            else "reference CPU simulator"
+        ),
         "drawdown_penalty": float(
             drawdown_penalty
         ),
@@ -2424,6 +2555,36 @@ def main() -> None:
         default=5.0,
     )
     ap.add_argument(
+        "--engine",
+        choices=[
+            "cpu",
+            "torch-cuda",
+        ],
+        default="cpu",
+        help=(
+            "PSO proposal engine. torch-cuda batches particles on a CUDA "
+            "GPU and exactly rescoring finalists with the CPU reference "
+            "simulator."
+        ),
+    )
+    ap.add_argument(
+        "--device",
+        default="cuda",
+        help=(
+            "Torch device used by --engine torch-cuda, for example cuda "
+            "or cuda:0."
+        ),
+    )
+    ap.add_argument(
+        "--gpu-finalists",
+        type=int,
+        default=128,
+        help=(
+            "Top GPU particle-best plans per restart to rescore with the "
+            "exact CPU simulator."
+        ),
+    )
+    ap.add_argument(
         "--max-decision-days",
         type=int,
         default=None,
@@ -2460,6 +2621,10 @@ def main() -> None:
     if args.restarts <= 0:
         raise SystemExit(
             "--restarts must be positive"
+        )
+    if args.gpu_finalists <= 0:
+        raise SystemExit(
+            "--gpu-finalists must be positive"
         )
 
     root = Path(
@@ -2515,6 +2680,15 @@ def main() -> None:
             if args.max_decision_days
             is not None
             else None
+        ),
+        engine=str(
+            args.engine
+        ),
+        device=str(
+            args.device
+        ),
+        gpu_finalists=int(
+            args.gpu_finalists
         ),
     )
 
