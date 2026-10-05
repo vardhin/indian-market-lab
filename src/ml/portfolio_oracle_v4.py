@@ -1747,6 +1747,330 @@ def select_teacher_samples(
     ]
 
 
+def checkpoint_config(
+    *,
+    years: list[int],
+    slots: int,
+    lookahead: int,
+    particles: int,
+    iterations: int,
+    restarts: int,
+    samples_per_state: int,
+    initial_capital: float,
+    costs: CostProfile,
+    drawdown_penalty: float,
+    engine: str,
+    device: str,
+    gpu_finalists: int,
+    teacher_pool_per_state: int | None,
+    teacher_sampling: str,
+    cuda_finalist_strategy: str,
+    output_namespace: str,
+) -> dict:
+    return {
+        "years": [
+            int(year)
+            for year in years
+        ],
+        "slots": int(
+            slots
+        ),
+        "lookahead": int(
+            lookahead
+        ),
+        "particles": int(
+            particles
+        ),
+        "iterations": int(
+            iterations
+        ),
+        "restarts": int(
+            restarts
+        ),
+        "samples_per_state": int(
+            samples_per_state
+        ),
+        "initial_capital": float(
+            initial_capital
+        ),
+        "costs": asdict(
+            costs
+        ),
+        "drawdown_penalty": float(
+            drawdown_penalty
+        ),
+        "checkpoint_dir": (
+            str(
+                checkpoint_dir
+            )
+            if checkpoint_dir
+            is not None
+            else None
+        ),
+        "checkpoint_every": int(
+            checkpoint_every
+        ),
+        "resumed": bool(
+            resume
+        ),
+        "engine": str(
+            engine
+        ),
+        "device": str(
+            device
+        ),
+        "gpu_finalists": int(
+            gpu_finalists
+        ),
+        "teacher_pool_per_state": int(
+            teacher_pool_per_state
+            if teacher_pool_per_state
+            is not None
+            else samples_per_state
+        ),
+        "teacher_sampling": str(
+            teacher_sampling
+        ),
+        "cuda_finalist_strategy": str(
+            cuda_finalist_strategy
+        ),
+        "output_namespace": str(
+            output_namespace
+        ),
+    }
+
+
+def write_json_atomic(
+    path: Path,
+    payload: dict,
+) -> None:
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    temporary = path.with_suffix(
+        path.suffix
+        + ".tmp"
+    )
+    temporary.write_text(
+        json.dumps(
+            payload,
+            indent=2,
+            default=float,
+        )
+        + "\n"
+    )
+    temporary.replace(
+        path
+    )
+
+
+def save_oracle_checkpoint(
+    checkpoint_dir: Path,
+    *,
+    sequence: int,
+    teacher_rows: list[dict],
+    trajectory_rows: list[dict],
+    year: int,
+    next_position: int,
+    state: dict,
+    processed_days: int,
+    teacher_rows_total: int,
+    trajectory_rows_total: int,
+    config: dict,
+) -> tuple[int, int, int]:
+    checkpoint_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    teacher_dir = (
+        checkpoint_dir
+        / "teacher_chunks"
+    )
+    trajectory_dir = (
+        checkpoint_dir
+        / "trajectory_chunks"
+    )
+    teacher_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    trajectory_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    if teacher_rows:
+        teacher_chunk = pd.DataFrame(
+            teacher_rows
+        )
+        teacher_path = (
+            teacher_dir
+            / f"teacher_{sequence:05d}.parquet"
+        )
+        teacher_tmp = teacher_path.with_suffix(
+            ".parquet.tmp"
+        )
+        teacher_chunk.to_parquet(
+            teacher_tmp,
+            index=False,
+            compression="zstd",
+        )
+        teacher_tmp.replace(
+            teacher_path
+        )
+        teacher_rows_total += len(
+            teacher_chunk
+        )
+
+    if trajectory_rows:
+        trajectory_chunk = pd.DataFrame(
+            trajectory_rows
+        )
+        trajectory_path = (
+            trajectory_dir
+            / f"trajectory_{sequence:05d}.parquet"
+        )
+        trajectory_tmp = trajectory_path.with_suffix(
+            ".parquet.tmp"
+        )
+        trajectory_chunk.to_parquet(
+            trajectory_tmp,
+            index=False,
+            compression="zstd",
+        )
+        trajectory_tmp.replace(
+            trajectory_path
+        )
+        trajectory_rows_total += len(
+            trajectory_chunk
+        )
+
+    next_sequence = (
+        sequence
+        + 1
+    )
+
+    write_json_atomic(
+        checkpoint_dir
+        / "resume.json",
+        {
+            "version": 1,
+            "config": config,
+            "next_sequence": int(
+                next_sequence
+            ),
+            "resume_year": int(
+                year
+            ),
+            "resume_position": int(
+                next_position
+            ),
+            "processed_days": int(
+                processed_days
+            ),
+            "teacher_rows_total": int(
+                teacher_rows_total
+            ),
+            "trajectory_rows_total": int(
+                trajectory_rows_total
+            ),
+            "state": clone_state(
+                state
+            ),
+        },
+    )
+
+    teacher_rows.clear()
+    trajectory_rows.clear()
+
+    return (
+        next_sequence,
+        teacher_rows_total,
+        trajectory_rows_total,
+    )
+
+
+def load_oracle_checkpoint(
+    checkpoint_dir: Path,
+    *,
+    expected_config: dict,
+) -> dict:
+    resume_path = (
+        checkpoint_dir
+        / "resume.json"
+    )
+    if not resume_path.is_file():
+        raise FileNotFoundError(
+            "Missing resume checkpoint: "
+            f"{resume_path}"
+        )
+
+    payload = json.loads(
+        resume_path.read_text()
+    )
+
+    found_config = payload.get(
+        "config"
+    )
+    if found_config != expected_config:
+        raise RuntimeError(
+            "Checkpoint configuration does not match this oracle run. "
+            "Use the exact same oracle/search/teacher parameters or a "
+            "different checkpoint directory."
+        )
+
+    return payload
+
+
+def load_checkpoint_table(
+    checkpoint_dir: Path,
+    *,
+    prefix: str,
+    next_sequence: int,
+) -> pd.DataFrame:
+    folder = (
+        checkpoint_dir
+        / (
+            "teacher_chunks"
+            if prefix == "teacher"
+            else "trajectory_chunks"
+        )
+    )
+
+    frames: list[
+        pd.DataFrame
+    ] = []
+
+    for sequence in range(
+        int(
+            next_sequence
+        )
+    ):
+        path = (
+            folder
+            / f"{prefix}_{sequence:05d}.parquet"
+        )
+        if not path.is_file():
+            raise FileNotFoundError(
+                "Checkpoint metadata references a missing chunk: "
+                f"{path}"
+            )
+        frames.append(
+            pd.read_parquet(
+                path
+            )
+        )
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(
+        frames,
+        ignore_index=True,
+    )
+
+
 def execute_first_action(
     state: dict,
     *,
@@ -1810,6 +2134,9 @@ def build_oracle(
     teacher_sampling: str = "top",
     cuda_finalist_strategy: str = "top",
     output_namespace: str = "portfolio_oracle_v4",
+    checkpoint_dir: Path | None = None,
+    checkpoint_every: int = 5,
+    resume: bool = False,
 ) -> dict:
     panel = load_panel(
         root,
@@ -1919,7 +2246,106 @@ def build_oracle(
         dict
     ] = []
 
+    run_checkpoint_config = checkpoint_config(
+        years=years,
+        slots=slots,
+        lookahead=lookahead,
+        particles=particles,
+        iterations=iterations,
+        restarts=restarts,
+        samples_per_state=samples_per_state,
+        initial_capital=initial_capital,
+        costs=costs,
+        drawdown_penalty=drawdown_penalty,
+        engine=engine,
+        device=device,
+        gpu_finalists=gpu_finalists,
+        teacher_pool_per_state=teacher_pool_per_state,
+        teacher_sampling=teacher_sampling,
+        cuda_finalist_strategy=cuda_finalist_strategy,
+        output_namespace=output_namespace,
+    )
+
     processed_days = 0
+    checkpoint_sequence = 0
+    persisted_teacher_rows = 0
+    persisted_trajectory_rows = 0
+    resume_year: int | None = None
+    resume_position = 0
+    resume_state: dict | None = None
+
+    if checkpoint_dir is not None:
+        checkpoint_dir = checkpoint_dir.resolve()
+        resume_path = (
+            checkpoint_dir
+            / "resume.json"
+        )
+
+        if resume:
+            payload = load_oracle_checkpoint(
+                checkpoint_dir,
+                expected_config=(
+                    run_checkpoint_config
+                ),
+            )
+            checkpoint_sequence = int(
+                payload[
+                    "next_sequence"
+                ]
+            )
+            processed_days = int(
+                payload[
+                    "processed_days"
+                ]
+            )
+            persisted_teacher_rows = int(
+                payload[
+                    "teacher_rows_total"
+                ]
+            )
+            persisted_trajectory_rows = int(
+                payload[
+                    "trajectory_rows_total"
+                ]
+            )
+            resume_year = int(
+                payload[
+                    "resume_year"
+                ]
+            )
+            resume_position = int(
+                payload[
+                    "resume_position"
+                ]
+            )
+            resume_state = clone_state(
+                payload[
+                    "state"
+                ]
+            )
+
+            print(
+                "Resuming oracle checkpoint: "
+                f"{processed_days:,} decision states · "
+                f"{persisted_teacher_rows:,} teacher rows · "
+                f"year {resume_year} position {resume_position}",
+                flush=True,
+            )
+        elif resume_path.exists():
+            raise RuntimeError(
+                "Checkpoint directory already contains resume.json. "
+                "Pass --resume to continue it, or use a different "
+                "--checkpoint-dir."
+            )
+        else:
+            checkpoint_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+    elif resume:
+        raise RuntimeError(
+            "--resume requires --checkpoint-dir"
+        )
 
     total_decisions = 0
     for planned_year in years:
@@ -1993,9 +2419,10 @@ def build_oracle(
         total=total_work,
     )
     progress.update(
-        0,
+        processed_days
+        * work_per_decision,
         message=(
-            f"0/{total_decisions} "
+            f"{processed_days}/{total_decisions} "
             "decision states"
         ),
         detail=(
@@ -2004,6 +2431,26 @@ def build_oracle(
             f"{iterations} iterations"
         ),
         force=True,
+    )
+
+    last_checkpoint_year = (
+        int(
+            resume_year
+        )
+        if resume_year
+        is not None
+        else None
+    )
+    last_checkpoint_position = int(
+        resume_position
+    )
+    last_checkpoint_state = (
+        clone_state(
+            resume_state
+        )
+        if resume_state
+        is not None
+        else None
     )
 
     for year in years:
@@ -2028,16 +2475,48 @@ def build_oracle(
         ):
             continue
 
-        state = {
-            "cash": float(
-                initial_capital
-            ),
-            "fees": 0.0,
-            "holdings": {},
-        }
+        if (
+            resume_year is not None
+            and int(
+                year
+            )
+            < int(
+                resume_year
+            )
+        ):
+            continue
+
+        if (
+            resume_year is not None
+            and int(
+                year
+            )
+            == int(
+                resume_year
+            )
+        ):
+            if resume_state is None:
+                raise RuntimeError(
+                    "Resume checkpoint is missing portfolio state."
+                )
+            state = clone_state(
+                resume_state
+            )
+            start_position = int(
+                resume_position
+            )
+        else:
+            state = {
+                "cash": float(
+                    initial_capital
+                ),
+                "fees": 0.0,
+                "holdings": {},
+            }
+            start_position = 0
 
         for position in range(
-            0,
+            start_position,
             len(
                 year_indices
             )
@@ -2398,7 +2877,62 @@ def build_oracle(
                 costs=costs,
             )
 
+            last_checkpoint_year = int(
+                year
+            )
+            last_checkpoint_position = int(
+                position
+                + 1
+            )
+            last_checkpoint_state = clone_state(
+                state
+            )
+
             processed_days += 1
+
+            if (
+                checkpoint_dir is not None
+                and checkpoint_every > 0
+                and processed_days
+                % checkpoint_every
+                == 0
+            ):
+                (
+                    checkpoint_sequence,
+                    persisted_teacher_rows,
+                    persisted_trajectory_rows,
+                ) = save_oracle_checkpoint(
+                    checkpoint_dir,
+                    sequence=(
+                        checkpoint_sequence
+                    ),
+                    teacher_rows=(
+                        teacher_rows
+                    ),
+                    trajectory_rows=(
+                        trajectory_rows
+                    ),
+                    year=int(
+                        year
+                    ),
+                    next_position=int(
+                        position
+                        + 1
+                    ),
+                    state=state,
+                    processed_days=(
+                        processed_days
+                    ),
+                    teacher_rows_total=(
+                        persisted_teacher_rows
+                    ),
+                    trajectory_rows_total=(
+                        persisted_trajectory_rows
+                    ),
+                    config=(
+                        run_checkpoint_config
+                    ),
+                )
 
             progress.update(
                 processed_days
@@ -2409,7 +2943,7 @@ def build_oracle(
                     "decision states"
                 ),
                 detail=(
-                    f"{len(teacher_rows):,} "
+                    f"{persisted_teacher_rows + len(teacher_rows):,} "
                     "teacher rows"
                 ),
                 force=True,
@@ -2423,6 +2957,59 @@ def build_oracle(
         ):
             break
 
+    if (
+        checkpoint_dir is not None
+        and (
+            teacher_rows
+            or trajectory_rows
+        )
+    ):
+        if (
+            last_checkpoint_year is None
+            or last_checkpoint_state
+            is None
+        ):
+            raise RuntimeError(
+                "Cannot flush checkpoint without a completed oracle state."
+            )
+        (
+            checkpoint_sequence,
+            persisted_teacher_rows,
+            persisted_trajectory_rows,
+        ) = save_oracle_checkpoint(
+            checkpoint_dir,
+            sequence=(
+                checkpoint_sequence
+            ),
+            teacher_rows=(
+                teacher_rows
+            ),
+            trajectory_rows=(
+                trajectory_rows
+            ),
+            year=int(
+                last_checkpoint_year
+            ),
+            next_position=int(
+                last_checkpoint_position
+            ),
+            state=(
+                last_checkpoint_state
+            ),
+            processed_days=(
+                processed_days
+            ),
+            teacher_rows_total=(
+                persisted_teacher_rows
+            ),
+            trajectory_rows_total=(
+                persisted_trajectory_rows
+            ),
+            config=(
+                run_checkpoint_config
+            ),
+        )
+
     progress.finish(
         message=(
             f"{processed_days}/"
@@ -2430,17 +3017,33 @@ def build_oracle(
             "decision states"
         ),
         detail=(
-            f"{len(teacher_rows):,} "
+            f"{persisted_teacher_rows + len(teacher_rows):,} "
             "teacher rows"
         ),
     )
 
-    teacher = pd.DataFrame(
-        teacher_rows
-    )
-    trajectory = pd.DataFrame(
-        trajectory_rows
-    )
+    if checkpoint_dir is not None:
+        teacher = load_checkpoint_table(
+            checkpoint_dir,
+            prefix="teacher",
+            next_sequence=(
+                checkpoint_sequence
+            ),
+        )
+        trajectory = load_checkpoint_table(
+            checkpoint_dir,
+            prefix="trajectory",
+            next_sequence=(
+                checkpoint_sequence
+            ),
+        )
+    else:
+        teacher = pd.DataFrame(
+            teacher_rows
+        )
+        trajectory = pd.DataFrame(
+            trajectory_rows
+        )
 
     if teacher.empty:
         raise RuntimeError(
@@ -2636,6 +3239,39 @@ def build_oracle(
         )
         + "\n"
     )
+
+    if checkpoint_dir is not None:
+        durable_final = (
+            checkpoint_dir
+            / "final"
+        )
+        durable_final.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        teacher.to_parquet(
+            durable_final
+            / "development_teacher.parquet",
+            index=False,
+            compression="zstd",
+        )
+        trajectory.to_parquet(
+            durable_final
+            / "oracle_trajectory.parquet",
+            index=False,
+            compression="zstd",
+        )
+        (
+            durable_final
+            / "summary.json"
+        ).write_text(
+            json.dumps(
+                summary,
+                indent=2,
+                default=float,
+            )
+            + "\n"
+        )
 
     print(
         "\n=== "
@@ -2925,6 +3561,30 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--checkpoint-dir",
+        default=None,
+        help=(
+            "Persistent checkpoint directory, ideally on mounted Google "
+            "Drive in Colab."
+        ),
+    )
+    ap.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=5,
+        help=(
+            "Persist resume state and buffered teacher/trajectory chunks "
+            "every N completed decision states."
+        ),
+    )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume from --checkpoint-dir/resume.json."
+        ),
+    )
+    ap.add_argument(
         "--max-decision-days",
         type=int,
         default=None,
@@ -2985,6 +3645,11 @@ def main() -> None:
         raise SystemExit(
             "--gpu-finalists must be >= --teacher-pool-per-state "
             "for CUDA teacher pooling"
+        )
+
+    if args.checkpoint_every <= 0:
+        raise SystemExit(
+            "--checkpoint-every must be positive"
         )
 
     root = Path(
@@ -3066,6 +3731,20 @@ def main() -> None:
         ),
         output_namespace=str(
             args.output_namespace
+        ),
+        checkpoint_dir=(
+            Path(
+                args.checkpoint_dir
+            )
+            if args.checkpoint_dir
+            is not None
+            else None
+        ),
+        checkpoint_every=int(
+            args.checkpoint_every
+        ),
+        resume=bool(
+            args.resume
         ),
     )
 
