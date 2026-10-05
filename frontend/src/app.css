@@ -20,16 +20,30 @@
 * { box-sizing: border-box; }
 html, body {
   margin: 0;
+  width: 100%;
+  height: 100%;
   min-width: 1180px;
-  min-height: 100%;
+  min-height: 0;
   background: var(--bg);
+  overflow: hidden;
 }
-body { overflow-x: auto; }
+
+body {
+  overflow: hidden;
+}
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
 .lab-shell {
-  min-height: 100vh;
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  display: grid;
+  grid-template-rows:
+    58px
+    minmax(0, 1fr)
+    clamp(190px, 24vh, 250px);
+  overflow: hidden;
   background:
     radial-gradient(circle at 42% -15%, rgba(86,111,255,.11), transparent 31%),
     var(--bg);
@@ -42,8 +56,7 @@ button { cursor: pointer; }
   padding: 0 16px;
   border-bottom: 1px solid var(--line);
   background: rgba(8,11,16,.94);
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 20;
   backdrop-filter: blur(12px);
 }
@@ -125,19 +138,37 @@ button { cursor: pointer; }
 }
 
 .workspace {
+  min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-columns: 292px minmax(560px, 1fr) 340px;
   gap: 1px;
+  overflow: hidden;
   background: var(--line);
   border-bottom: 1px solid var(--line);
 }
+
 .panel {
-  background: var(--panel);
   min-width: 0;
+  min-height: 0;
+  background: var(--panel);
+  overflow: hidden;
 }
+
 .sidebar,
-.chart-panel,
-.telemetry { min-height: 620px; }
+.telemetry,
+.chart-panel {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar > .panel-header,
+.telemetry > .panel-header,
+.chart-panel > .panel-header {
+  flex: 0 0 43px;
+}
 .panel-header {
   height: 43px;
   display: flex;
@@ -159,7 +190,19 @@ button { cursor: pointer; }
   color: var(--muted-2);
   font-size: 10px;
 }
-.panel-body { padding: 12px; }
+.panel-body {
+  min-height: 0;
+  padding: 12px;
+}
+
+.sidebar > .panel-body,
+.telemetry > .panel-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .section {
   border-bottom: 1px solid var(--line-soft);
   padding: 12px 0;
@@ -251,6 +294,7 @@ button { cursor: pointer; }
 }
 
 .chart-toolbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -296,9 +340,16 @@ button { cursor: pointer; }
 }
 .market-chart {
   width: 100%;
+  height: 100%;
+  min-height: 0;
   background: #0b0f15;
 }
+
+.chart-panel > .market-chart {
+  flex: 1 1 auto;
+}
 .chart-footer {
+  flex: 0 0 47px;
   height: 47px;
   display: flex;
   align-items: center;
@@ -380,6 +431,10 @@ button { cursor: pointer; }
 .position-card-grid {
   display: grid;
   gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 3px;
 }
 
 .position-card {
@@ -690,6 +745,7 @@ button { cursor: pointer; }
 }
 
 .timeline {
+  flex: 0 0 auto;
   padding: 9px 12px 10px;
   border-top: 1px solid var(--line);
   background: #0a0e14;
@@ -707,10 +763,15 @@ button { cursor: pointer; }
 }
 
 .bottom-dock {
-  min-height: 330px;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #090d12;
 }
 .dock-tabs {
+  flex: 0 0 39px;
   display: flex;
   align-items: center;
   height: 39px;
@@ -734,8 +795,11 @@ button { cursor: pointer; }
 }
 .dock-spacer { flex: 1; }
 .dock-body {
-  height: 290px;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .table {
   width: 100%;
@@ -781,7 +845,8 @@ button { cursor: pointer; }
   border-color: rgba(255,93,108,.3);
 }
 .log-view {
-  height: 100%;
+  min-height: 100%;
+  height: auto;
   margin: 0;
   padding: 10px 12px 20px;
   color: #acb7c8;
@@ -798,6 +863,7 @@ button { cursor: pointer; }
   font-size: 11px;
 }
 .report-grid {
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
   gap: 8px;
@@ -821,8 +887,10 @@ button { cursor: pointer; }
   gap: 6px;
 }
 .game-market {
-  max-height: 160px;
+  max-height: min(300px, 34vh);
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: 1px solid var(--line);
   border-radius: 6px;
 }
@@ -861,6 +929,51 @@ button { cursor: pointer; }
 .toast.error {
   border-color: rgba(255,93,108,.45);
   color: #ffb0b7;
+}
+
+
+.sidebar > .panel-body,
+.telemetry > .panel-body,
+.dock-body,
+.game-market,
+.position-card-grid,
+.action-list,
+.trade-modal {
+  scrollbar-width: thin;
+  scrollbar-color: #344157 #0a0e14;
+}
+
+.sidebar > .panel-body::-webkit-scrollbar,
+.telemetry > .panel-body::-webkit-scrollbar,
+.dock-body::-webkit-scrollbar,
+.game-market::-webkit-scrollbar,
+.position-card-grid::-webkit-scrollbar,
+.action-list::-webkit-scrollbar,
+.trade-modal::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.sidebar > .panel-body::-webkit-scrollbar-thumb,
+.telemetry > .panel-body::-webkit-scrollbar-thumb,
+.dock-body::-webkit-scrollbar-thumb,
+.game-market::-webkit-scrollbar-thumb,
+.position-card-grid::-webkit-scrollbar-thumb,
+.action-list::-webkit-scrollbar-thumb,
+.trade-modal::-webkit-scrollbar-thumb {
+  background: #344157;
+  border-radius: 999px;
+  border: 2px solid #0a0e14;
+}
+
+.sidebar > .panel-body::-webkit-scrollbar-track,
+.telemetry > .panel-body::-webkit-scrollbar-track,
+.dock-body::-webkit-scrollbar-track,
+.game-market::-webkit-scrollbar-track,
+.position-card-grid::-webkit-scrollbar-track,
+.action-list::-webkit-scrollbar-track,
+.trade-modal::-webkit-scrollbar-track {
+  background: #0a0e14;
 }
 
 @media (max-width: 1300px) {
