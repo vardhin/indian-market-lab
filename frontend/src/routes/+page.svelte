@@ -59,6 +59,7 @@
   let orderAmount = 10000;
   let orderFractionPct = 10;
   let orderTargetWeightPct = 20;
+  let holdingModalSymbol = '';
 
   let toast = null;
   let toastTimer;
@@ -80,6 +81,11 @@
     gameMarket?.find(
       (item) =>
         item.symbol === gameSelected
+    ) || null;
+  $: modalPosition =
+    game?.holdings?.find(
+      (holding) =>
+        holding.symbol === holdingModalSymbol
     ) || null;
 
   function notify(message, type = 'info') {
@@ -470,7 +476,7 @@
     type,
     extra = {}
   ) {
-    if (!game?.id) return;
+    if (!game?.id) return false;
 
     try {
       game = await api.gameAction(
@@ -492,8 +498,10 @@
           `Liquidated at ${fmtMoney(game.equity)}`
         );
       }
+      return true;
     } catch (error) {
       notify(error.message, 'error');
+      return false;
     }
   }
 
@@ -591,6 +599,99 @@
           )
       }
     );
+  }
+
+  function openHoldingModal(holding) {
+    holdingModalSymbol =
+      holding.symbol;
+    gameSelected =
+      holding.symbol;
+    orderTargetWeightPct =
+      Math.max(
+        0,
+        Math.min(
+          100,
+          Number(
+            holding.weight
+          )
+          * 100
+        )
+      );
+    orderQuantity = 1;
+    selectSymbol(
+      holding.symbol
+    );
+  }
+
+  function closeHoldingModal() {
+    holdingModalSymbol = '';
+  }
+
+  async function modalAdd() {
+    if (!modalPosition) return;
+    const ok = await act(
+      'BUY',
+      {
+        symbol:
+          modalPosition.symbol,
+        ...orderPayload()
+      }
+    );
+    if (ok) closeHoldingModal();
+  }
+
+  async function modalTrim() {
+    if (!modalPosition) return;
+    const ok = await act(
+      'SELL',
+      {
+        symbol:
+          modalPosition.symbol,
+        ...orderPayload()
+      }
+    );
+    if (ok) closeHoldingModal();
+  }
+
+  async function modalSetTarget() {
+    if (!modalPosition) return;
+    const ok = await act(
+      'SET_TARGET',
+      {
+        symbol:
+          modalPosition.symbol,
+        sizing_mode:
+          'target_weight',
+        target_weight:
+          Math.min(
+            1,
+            Math.max(
+              0,
+              Number(
+                orderTargetWeightPct
+              )
+              / 100
+            )
+          )
+      }
+    );
+    if (ok) closeHoldingModal();
+  }
+
+  async function modalExitPosition() {
+    if (!modalPosition) return;
+    const ok = await act(
+      'SELL',
+      {
+        symbol:
+          modalPosition.symbol,
+        sizing_mode:
+          'shares',
+        quantity:
+          modalPosition.quantity
+      }
+    );
+    if (ok) closeHoldingModal();
   }
 
   function switchAction() {
@@ -1624,66 +1725,84 @@
 
           {#if mode === 'game' && game}
             {#if game.holdings?.length}
-              {#each game.holdings as holding}
-                <button
-                  class="holding-row"
-                  style="
-                    width:100%;
-                    border-left:0;
-                    border-right:0;
-                    border-top:0;
-                    color:inherit;
-                    background:transparent;
-                    text-align:left;
-                    cursor:pointer;
-                  "
-                  onclick={() => {
-                    gameSelected =
-                      holding.symbol;
-                    selectSymbol(
-                      holding.symbol
-                    );
-                  }}
-                >
-                  <span>
-                    <strong>
-                      {holding.symbol}
-                    </strong>
-                    · {holding.quantity}
-                    sh
-                    · {fmtPct(
-                      holding.weight
-                    )}
-                    <br />
-                    <span class="muted">
-                      avg {fmtMoney(
-                        holding.average_cost
+              <div class="position-card-grid">
+                {#each game.holdings as holding}
+                  <button
+                    class:profit={holding.unrealized_pnl > 0}
+                    class:loss={holding.unrealized_pnl < 0}
+                    class:flat={holding.unrealized_pnl === 0}
+                    class="position-card"
+                    onclick={() =>
+                      openHoldingModal(
+                        holding
                       )}
-                      · now {fmtMoney(
-                        holding.price
-                      )}
-                      · max add ~{holding.estimated_max_add_shares}
-                    </span>
-                  </span>
-                  <span
-                    style={`color:${
-                      holding.unrealized_pnl >= 0
-                        ? '#67dea0'
-                        : '#ff7e89'
-                    }`}
                   >
-                    {fmtMoney(
-                      holding.unrealized_pnl
-                    )}
-                    <br />
-                    <span class="tiny">
-                      {fmtPct(
-                        holding.unrealized_return
+                    <div class="position-card-head">
+                      <div>
+                        <div class="position-symbol">
+                          {holding.symbol}
+                        </div>
+                        <div class="position-weight">
+                          {fmtPct(
+                            holding.weight
+                          )}
+                          of portfolio
+                        </div>
+                      </div>
+
+                      <div class="position-return">
+                        {holding.unrealized_pnl >= 0
+                          ? '+'
+                          : ''}{fmtPct(
+                          holding.unrealized_return
+                        )}
+                      </div>
+                    </div>
+
+                    <div class="position-value">
+                      {fmtMoney(
+                        holding.value
                       )}
-                    </span>
-                  </span>
-                </button>
-              {/each}
+                    </div>
+
+                    <div class="position-card-stats">
+                      <span>
+                        <strong>{holding.quantity}</strong>
+                        shares
+                      </span>
+                      <span>
+                        avg
+                        <strong>{fmtMoney(
+                          holding.average_cost
+                        )}</strong>
+                      </span>
+                      <span>
+                        now
+                        <strong>{fmtMoney(
+                          holding.price
+                        )}</strong>
+                      </span>
+                    </div>
+
+                    <div class="position-pnl-row">
+                      <span>
+                        unrealized
+                      </span>
+                      <strong>
+                        {holding.unrealized_pnl >= 0
+                          ? '+'
+                          : ''}{fmtMoney(
+                          holding.unrealized_pnl
+                        )}
+                      </strong>
+                    </div>
+
+                    <div class="position-card-foot">
+                      Click to manage position
+                    </div>
+                  </button>
+                {/each}
+              </div>
             {:else}
               <div class="tiny muted">
                 100% cash.
@@ -2155,6 +2274,268 @@
     </div>
   </section>
 </div>
+
+{#if mode === 'game' && game && holdingModalSymbol && modalPosition}
+  <div
+    class="trade-modal-backdrop"
+    role="presentation"
+    onclick={closeHoldingModal}
+  >
+    <div
+      class:profit={modalPosition.unrealized_pnl > 0}
+      class:loss={modalPosition.unrealized_pnl < 0}
+      class="trade-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Manage ${modalPosition.symbol} position`}
+      onclick={(event) =>
+        event.stopPropagation()}
+    >
+      <div class="trade-modal-head">
+        <div>
+          <div class="trade-modal-kicker">
+            Position manager
+          </div>
+          <div class="trade-modal-title">
+            {modalPosition.symbol}
+          </div>
+        </div>
+
+        <button
+          class="modal-close"
+          aria-label="Close"
+          onclick={closeHoldingModal}
+        >
+          ×
+        </button>
+      </div>
+
+      <div class="modal-pnl-strip">
+        <div>
+          <span>Unrealized P&L</span>
+          <strong>
+            {modalPosition.unrealized_pnl >= 0
+              ? '+'
+              : ''}{fmtMoney(
+              modalPosition.unrealized_pnl
+            )}
+          </strong>
+        </div>
+        <div>
+          <span>Return</span>
+          <strong>
+            {modalPosition.unrealized_return >= 0
+              ? '+'
+              : ''}{fmtPct(
+              modalPosition.unrealized_return
+            )}
+          </strong>
+        </div>
+        <div>
+          <span>Weight</span>
+          <strong>
+            {fmtPct(
+              modalPosition.weight
+            )}
+          </strong>
+        </div>
+      </div>
+
+      <div class="modal-position-grid">
+        <div>
+          <span>Quantity</span>
+          <strong>
+            {modalPosition.quantity}
+            shares
+          </strong>
+        </div>
+        <div>
+          <span>Average cost</span>
+          <strong>
+            {fmtMoney(
+              modalPosition.average_cost
+            )}
+          </strong>
+        </div>
+        <div>
+          <span>Current price</span>
+          <strong>
+            {fmtMoney(
+              modalPosition.price
+            )}
+          </strong>
+        </div>
+        <div>
+          <span>Market value</span>
+          <strong>
+            {fmtMoney(
+              modalPosition.value
+            )}
+          </strong>
+        </div>
+        <div>
+          <span>Cash available</span>
+          <strong>
+            {fmtMoney(
+              game.cash
+            )}
+          </strong>
+        </div>
+        <div>
+          <span>Approx max add</span>
+          <strong>
+            {modalPosition.estimated_max_add_shares}
+            shares
+          </strong>
+        </div>
+      </div>
+
+      <div class="modal-divider"></div>
+
+      <div class="modal-order-head">
+        <div>
+          <div class="section-title">
+            Resize position
+          </div>
+          <div class="tiny muted">
+            Orders execute at the next market open.
+          </div>
+        </div>
+
+        <select
+          class="select modal-sizing-select"
+          bind:value={orderSizingMode}
+        >
+          <option value="shares">
+            Shares
+          </option>
+          <option value="rupees">
+            ₹ amount
+          </option>
+          <option value="equity_fraction">
+            % of equity
+          </option>
+          <option value="target_weight">
+            Target weight
+          </option>
+        </select>
+      </div>
+
+      {#if orderSizingMode === 'shares'}
+        <div class="modal-size-row">
+          <button
+            class="size-chip"
+            onclick={() =>
+              (orderQuantity = 1)}
+          >
+            +1
+          </button>
+          <button
+            class="size-chip"
+            onclick={() =>
+              (orderQuantity = 5)}
+          >
+            +5
+          </button>
+          <button
+            class="size-chip"
+            onclick={() =>
+              (orderQuantity = 10)}
+          >
+            +10
+          </button>
+          <button
+            class="size-chip"
+            onclick={() =>
+              (orderQuantity =
+                modalPosition.quantity)}
+          >
+            current qty
+          </button>
+        </div>
+
+        <div class="control">
+          <label>Shares</label>
+          <input
+            class="input"
+            type="number"
+            min="1"
+            step="1"
+            bind:value={orderQuantity}
+          />
+        </div>
+      {:else if orderSizingMode === 'rupees'}
+        <div class="control">
+          <label>Rupee notional</label>
+          <input
+            class="input"
+            type="number"
+            min="1"
+            step="1000"
+            bind:value={orderAmount}
+          />
+        </div>
+      {:else if orderSizingMode === 'equity_fraction'}
+        <div class="control">
+          <label>Portfolio equity (%)</label>
+          <input
+            class="input"
+            type="number"
+            min="0.01"
+            max="100"
+            step="1"
+            bind:value={orderFractionPct}
+          />
+        </div>
+      {:else}
+        <div class="control">
+          <label>
+            Target weight (%)
+          </label>
+          <input
+            class="input"
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            bind:value={orderTargetWeightPct}
+          />
+        </div>
+      {/if}
+
+      <div class="modal-actions">
+        {#if orderSizingMode === 'target_weight'}
+          <button
+            class="btn btn-primary"
+            onclick={modalSetTarget}
+          >
+            Set target weight
+          </button>
+        {:else}
+          <button
+            class="btn btn-good"
+            onclick={modalAdd}
+          >
+            Add / average
+          </button>
+          <button
+            class="btn btn-danger"
+            onclick={modalTrim}
+          >
+            Trim / sell
+          </button>
+        {/if}
+
+        <button
+          class="btn btn-danger modal-exit"
+          onclick={modalExitPosition}
+        >
+          Exit full position
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if toast}
   <div
